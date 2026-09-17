@@ -1,0 +1,117 @@
+name: lost-found
+
+# Full stack: database + API + operator console.
+#
+#   docker compose up --build                          everything
+#   docker compose up -d postgres                      just the database
+#   docker compose --profile testing up -d mediamtx    local RTSP for camera tests
+#
+# backend/docker-compose.yml still exists and still works -- it is the
+# backend-only stack, for when you are iterating on detection and do not want a
+# web container in the way. This file wires all three tiers together. Run it
+# from THIS directory (features/lost&found), not from backend/.
+#
+# Host ports avoid the other feature stacks already running on this machine
+# (rag, blocked-exit, no-entry-zone hold 5433, 5435, 8001 and 8002): Postgres on
+# 5436, the API on 8003, the console on 8082.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lostfound_db}
+      POSTGRES_USER: ${POSTGRES_USER:-lostfound}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lostfound_pass}
+    ports:
+      # Host port only. Inside the network the API always uses 5432.
+      - "${POSTGRES_HOST_PORT:-5436}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # There is no Alembic in this feature, so schema.sql *is* the schema and
+      # it does belong in initdb.d -- Postgres runs it once, on the first boot
+      # of an empty volume. Mounted as a single file so seed.sql and queries.sql
+      # sit alongside it without being executed at boot.
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+      # The rest, readable inside the container for running by hand.
+      - ./database:/sql:ro
+    healthcheck:
+      test:
+        ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lostfound} -d ${POSTGRES_DB:-lostfound_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ./backend/.env
+    environment:
+      # Overrides .env: inside the network Postgres is reachable by service name
+      # on its container port, whatever the host publishes it as.
+      DB_HOST: postgres
+      DB_PORT: 5432
+      # The console's origin, for the direct (non-proxied) calls a browser makes
+      # if someone opens the API host itself.
+      CORS_ORIGINS: '["http://localhost:8082","http://localhost:5173"]'
+    ports:
+      - "${API_HOST_PORT:-8003}:8000"
+    volumes:
+      # YOLO and CLIP weights are downloaded on first warmup; keeping them out
+      # of the image means a rebuild does not re-download ~350 MB.
+      - ./backend/models:/app/models
+      - ./backend/logs:/app/logs
+    # Workers need time to release their captures before the container dies.
+    stop_grace_period: 30s
+    deploy:
+      # NOT scalable: stream workers are in-process asyncio tasks holding
+      # per-camera tracker state. Two replicas would open every camera twice
+      # and double every alert.
+      replicas: 1
+
+  web:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      # nginx proxies /api, /health and the backend's /docs to FastAPI. Service
+      # name and internal port -- the browser never resolves this.
+      LF_API_URL: http://api:8000
+    ports:
+      - "${WEB_HOST_PORT:-8082}:80"
+
+  # Local RTSP server for testing without a real camera. It republishes
+  # backend/videos/sample.mp4 on an endless loop, so the path exists as soon as
+  # the container is up:
+  #
+  #   docker compose --profile testing up -d mediamtx
+  #
+  # Register the camera as rtsp://mediamtx:8554/lostfound -- that URL is
+  # resolved by the api container, so "localhost" there would mean the
+  # container itself. From the host it is rtsp://localhost:8556/lostfound.
+  mediamtx:
+    image: bluenviron/mediamtx:latest-ffmpeg
+    profiles: ["testing"]
+    restart: unless-stopped
+    environment:
+      MTX_PROTOCOLS: tcp
+      # -stream_loop -1 so the clip never ends: a worker reconnecting to a
+      # finished stream looks like a broken camera rather than a test rig.
+      MTX_PATHS_LOSTFOUND_RUNONINIT: >-
+        ffmpeg -re -stream_loop -1 -i /videos/sample.mp4 -c copy -f rtsp
+        rtsp://localhost:8554/lostfound
+      MTX_PATHS_LOSTFOUND_RUNONINITRESTART: "yes"
+    volumes:
+      - ./backend/videos:/videos:ro
+    ports:
+      - "${RTSP_HOST_PORT:-8556}:8554"
+
+volumes:
+  pgdata:

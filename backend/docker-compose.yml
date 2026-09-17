@@ -1,0 +1,65 @@
+# Explicit project name: without it compose derives one from the directory
+# ("backend"), which collides with any other stack started from a folder of the
+# same name. It also matches ../docker-compose.yml, so the two share one pgdata
+# volume and one API image rather than running against two separate databases.
+name: lost-found
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lostfound_db}
+      POSTGRES_USER: ${POSTGRES_USER:-lostfound}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lostfound_pass}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../database/schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+      - ../database:/sql:ro
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lostfound} -d ${POSTGRES_DB:-lostfound_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # Persist downloaded YOLO/CLIP weights across rebuilds
+      - ./models:/app/models
+      - ./logs:/app/logs
+    ports:
+      - "8000:8000"
+
+  # Republishes a local mp4 as RTSP so the camera path is testable without
+  # physical hardware:  docker compose --profile testing up -d mediamtx
+  # Register the camera as rtsp://mediamtx:8554/lostfound -- that URL is
+  # resolved by the api container, so "localhost" there would mean itself.
+  mediamtx:
+    image: bluenviron/mediamtx:latest-ffmpeg
+    profiles: ["testing"]
+    restart: unless-stopped
+    environment:
+      MTX_PROTOCOLS: tcp
+      MTX_PATHS_LOSTFOUND_RUNONINIT: >-
+        ffmpeg -re -stream_loop -1 -i /videos/sample.mp4 -c copy -f rtsp
+        rtsp://localhost:8554/lostfound
+      MTX_PATHS_LOSTFOUND_RUNONINITRESTART: "yes"
+    volumes:
+      - ./videos:/videos:ro
+    ports:
+      - "8554:8554"
+
+volumes:
+  pgdata:

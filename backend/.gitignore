@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+logs/
+*.log
+models/*.pt
+models/*.pth
+models/*.bin
+.ultralytics/
+.pytest_cache/
+.coverage
+htmlcov/
+videos/*.mp4
