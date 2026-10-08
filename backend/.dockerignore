@@ -10,3 +10,7 @@ logs/
 .env
 README.md
 tests/
+models/
+videos/
+*.mp4
+.ultralytics/

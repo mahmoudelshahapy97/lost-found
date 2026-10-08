@@ -51,13 +51,16 @@ class ModelRegistry:
         from ultralytics import YOLO
 
         weights = config.yolo_model_path
-        # Ultralytics downloads a missing pretrained checkpoint by basename.
-        if not os.path.exists(weights):
-            fallback = os.path.basename(weights)
-            logger.info("Weights %s not present; ultralytics will fetch '%s'.", weights, fallback)
-            weights = fallback
 
         with self._yolo_lock:  # serialise the first download across workers
+            # Fetch a missing pretrained checkpoint to the configured path, so it
+            # lands in the mounted models/ dir instead of the working directory.
+            if not os.path.exists(weights):
+                from ultralytics.utils.downloads import attempt_download_asset
+
+                logger.info("Weights %s not present; downloading.", weights)
+                os.makedirs(os.path.dirname(weights) or ".", exist_ok=True)
+                weights = str(attempt_download_asset(weights))
             model = YOLO(weights)
 
         logger.info("YOLO loaded (%s) on %s", weights, self.device)
