@@ -13,6 +13,7 @@ from app.core.config import config
 from app.schemas.camera_schemas import CameraCreate, CameraResponse, CameraUpdate
 from app.services.camera_service import camera_service
 from app.services.rtsp_reader import grab_single_frame
+from app.services.object_store import object_store
 from app.services.stream_manager import clip_root, stream_manager
 from app.utils.image_utils import encode_jpeg, placeholder_frame
 from app.utils.response import create_response
@@ -131,7 +132,10 @@ async def delete_camera(
         deleted = await camera_service.delete_camera(camera_id)
         if not deleted:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found.")
-        # The events went with the camera (ON DELETE CASCADE); so do their clips.
+        # The events and found items went with the camera (ON DELETE CASCADE);
+        # so do their frames, crops and clips, in MinIO and on disk.
+        for prefix in ("frames", "crops", "clips"):
+            await object_store.remove_prefix(f"{prefix}/{camera_id}/")
         await asyncio.to_thread(shutil.rmtree, clip_root() / str(camera_id), True)
         return create_response(True, "Camera deleted.", {"camera_id": str(camera_id)})
     except HTTPException:

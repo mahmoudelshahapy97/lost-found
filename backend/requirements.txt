@@ -26,6 +26,9 @@ ultralytics
 torch
 torchvision
 
+# Object storage (images and videos)
+minio
+
 # Misc
 aiofiles
 httpx

@@ -26,6 +26,7 @@ from app.services.abandonment_service import AbandonmentParams, AbandonmentTrack
 from app.services.camera_service import camera_service
 from app.services.clip_recorder import ClipRecorder, FinishedClip, encode_mp4, resize_max_width
 from app.services.event_service import event_service
+from app.services.object_store import clip_key, object_store
 from app.services.rtsp_reader import RTSPReader
 from app.services.tracking_service import ObjectTracker
 from app.utils.image_utils import annotate_tracks, encode_jpeg
@@ -329,10 +330,12 @@ class CameraWorker:
         task.add_done_callback(_clip_tasks.discard)
 
     async def _save_clip(self, clip: FinishedClip) -> None:
-        """Encode to <clip_dir>/<camera_id>/<event_id>.mp4 and record it on the event.
+        """Encode the clip, upload it to MinIO and record its key on the event.
 
-        The file is written under a temporary name and renamed, so a reader
-        never sees a half-written mp4.
+        It is encoded locally under a temporary name and renamed, so a reader
+        never sees a half-written mp4. Once it is in MinIO the local file goes;
+        if MinIO is unreachable it stays at <clip_dir>/<camera_id>/<event_id>.mp4
+        and is served from there.
         """
         relative = Path(str(self.camera_id)) / f"{clip.key}.mp4"
         target = clip_root() / relative
@@ -343,7 +346,13 @@ class CameraWorker:
             if not ok:
                 return
             os.replace(partial, target)
-            await event_service.set_clip_path(clip.key, relative.as_posix())
+            key = clip_key(self.camera_id, clip.key)
+            if await object_store.put_file(key, str(target), "video/mp4"):
+                await event_service.set_clip_key(clip.key, key)
+                target.unlink(missing_ok=True)
+            else:
+                logger.warning("Camera %s: MinIO unavailable, clip %s kept on disk.", self.name, clip.key)
+                await event_service.set_clip_path(clip.key, relative.as_posix())
             self.clips_saved += 1
             logger.info(
                 "Camera %s: saved clip for event %s (%s frames @ %.1f fps)",

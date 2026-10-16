@@ -121,6 +121,8 @@ class Settings(BaseSettings):
     # Object detections ByteTrack leaves unconfirmed are followed by box overlap
     # (see tracking_service); this IoU links them frame to frame.
     loose_track_iou: float = 0.5
+    # ...and keeps their id across at most this many frames without a sighting.
+    loose_track_max_gap_frames: int = 10
 
     # COCO class ids: 24 backpack, 25 umbrella, 26 handbag, 28 suitcase, 67 cell phone
     person_class_id: int = 0
@@ -184,6 +186,17 @@ class Settings(BaseSettings):
     clip_post_seconds: float = 10.0
     clip_max_width: int = 960
     clip_jpeg_quality: int = 70
+
+    # =========================================================================
+    # OBJECT STORAGE (MinIO)
+    # =========================================================================
+    # Images and videos go to MinIO; Postgres keeps the records and object keys.
+    # Empty endpoint = disabled: media stays in Postgres bytes / clip files.
+    minio_endpoint: str = ""
+    minio_access_key: str = ""
+    minio_secret_key: str = ""
+    minio_bucket: str = "lostfound"
+    minio_secure: bool = False
 
     # =========================================================================
     # RETENTION

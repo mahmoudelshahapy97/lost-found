@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 from app.api.deps import require_role
 from app.core.config import config
 from app.services.model_registry import model_registry
+from app.services.object_store import object_store
 from app.services.stream_manager import stream_manager
 from app.utils.response import create_response
 
@@ -59,6 +60,13 @@ async def effective_config() -> Dict[str, Any]:
             "stream": {
                 "frame_skip": config.frame_skip,
                 "target_process_fps": config.target_process_fps,
+            },
+            "storage": {
+                # Images and videos in MinIO; records and object keys in Postgres.
+                "object_store": "minio" if object_store.enabled else "disabled",
+                "endpoint": config.minio_endpoint or None,
+                "bucket": config.minio_bucket if object_store.enabled else None,
+                "reachable": await object_store.healthy() if object_store.enabled else False,
             },
             "matching": {
                 "match_top_k": config.match_top_k,

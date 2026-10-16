@@ -202,6 +202,24 @@ def test_owner_walking_toward_the_camera_has_left():
     assert events[0].owner_track_id == 1
 
 
+def test_partial_view_of_a_known_bag_is_not_a_new_item():
+    """A passer-by half-hides a bag that was already there; its smaller box is the same bag."""
+    tracker = AbandonmentTracker(params=params())
+    partial = (110.0, 120.0, 140.0, 150.0)  # inside BAG_BOX, low IoU with it
+
+    def at(t: float) -> List[Detection]:
+        if 4.0 <= t < 6.0:
+            # Both boxes at once, then only the partial one, with a person in front.
+            boxes = [bag(), bag(partial, track_id=-5)] if t < 5.0 else [bag(partial, track_id=-5)]
+            return boxes + [person(NEAR_PERSON_BOX, track_id=9)]
+        return [bag()]
+
+    events = run(tracker, frames_for(16.0, 0.5, at))
+
+    assert events == []
+    assert all(not state.owners for state in tracker.tracks.values())
+
+
 def test_owner_present_but_too_far_starts_the_clock():
     """Still in frame is not enough - the owner has to stay close."""
     tracker = AbandonmentTracker(params=params())

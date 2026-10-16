@@ -130,6 +130,12 @@ SCHEMA_UPGRADES = (
     "ADD COLUMN IF NOT EXISTS color_hist BYTEA",
     "ALTER TABLE lost_item ADD COLUMN IF NOT EXISTS phash BIGINT, "
     "ADD COLUMN IF NOT EXISTS color_hist BYTEA",
+    # Images and videos live in MinIO; these hold their object keys. The old
+    # bytes / clip_path stay as the fallback when the store is unreachable.
+    "ALTER TABLE abandoned_event ADD COLUMN IF NOT EXISTS frame_key TEXT, "
+    "ADD COLUMN IF NOT EXISTS clip_key TEXT",
+    "ALTER TABLE found_item ADD COLUMN IF NOT EXISTS crop_key TEXT",
+    "ALTER TABLE lost_item ADD COLUMN IF NOT EXISTS photo_key TEXT",
 )
 
 

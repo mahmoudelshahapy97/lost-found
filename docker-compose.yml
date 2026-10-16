@@ -48,6 +48,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # Images and videos are written to MinIO (with a Postgres/disk fallback).
+      minio-init:
+        condition: service_completed_successfully
     env_file:
       - ./backend/.env
     environment:
@@ -58,6 +61,12 @@ services:
       # The console's origin, for the direct (non-proxied) calls a browser makes
       # if someone opens the API host itself.
       CORS_ORIGINS: '["http://localhost:8082","http://localhost:5173"]'
+      # Object storage for images and videos (minio service below).
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+      MINIO_BUCKET: ${MINIO_BUCKET:-lostfound}
+      MINIO_SECURE: "false"
     ports:
       - "${API_HOST_PORT:-8003}:8000"
     volumes:
@@ -156,5 +165,53 @@ services:
     ports:
       - "${RTSP_HOST_PORT:-8556}:8554"
 
+  # S3-compatible object storage for images and videos (event frames, found
+  # crops, report photos, evidence clips). Inside the network: http://minio:9000.
+  # Web console: http://localhost:${MINIO_CONSOLE_HOST_PORT:-9001}, log in with
+  # MINIO_ROOT_USER / MINIO_ROOT_PASSWORD from the root .env.
+  #
+  # MinIO no longer publishes community images (Docker Hub and quay.io are gone
+  # or login-only), so this is Chainguard's build of MinIO from source, which is
+  # still maintained and patched. Chainguard only offers :latest for free, so it
+  # is pinned by digest; to update, pull :latest and copy the new digest here.
+  minio:
+    image: cgr.dev/chainguard/minio@sha256:2136d593beacf4461187035eca949fe49abd589d5079735025c711ca58fee0c8
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+    ports:
+      - "${MINIO_API_HOST_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_HOST_PORT:-9001}:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      # The image ships mc but no curl/wget; "local" is mc's built-in alias
+      # for http://localhost:9000.
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # One-shot: creates the bucket, then exits. Re-running it is harmless.
+  minio-init:
+    image: cgr.dev/chainguard/minio@sha256:2136d593beacf4461187035eca949fe49abd589d5079735025c711ca58fee0c8
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set lf http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
+        mc mb --ignore-existing "lf/$$MINIO_BUCKET"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+      MINIO_BUCKET: ${MINIO_BUCKET:-lostfound}
+    # mc writes its alias config under $HOME.
+    restart: "no"
+
 volumes:
   pgdata:
+  miniodata:

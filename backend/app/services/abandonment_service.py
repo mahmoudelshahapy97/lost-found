@@ -36,7 +36,7 @@ from typing import Deque, Dict, List, Optional, Sequence, Set, Tuple
 
 from app.core.config import config
 from app.services.tracking_service import Detection
-from app.utils.geometry_utils import Box, Point, box_in_polygon, centroid, euclidean, iou
+from app.utils.geometry_utils import Box, Point, box_in_polygon, centroid, euclidean, iou, overlap_of_smaller
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +197,7 @@ class AbandonmentTracker:
 
         seen_ids = set()
         events: List[AbandonmentEvent] = []
+        objects = self._drop_partial_duplicates(objects)
         frame_ids = {d.track_id for d in objects}
 
         for detection in objects:
@@ -282,6 +283,22 @@ class AbandonmentTracker:
         self._trim_history(state, timestamp)
         return state
 
+    def _drop_partial_duplicates(self, objects: Sequence[Detection]) -> List[Detection]:
+        """One detection per object: drop a box lying mostly inside a known object's box.
+
+        A bag partly hidden by a passer-by can come back as a second, smaller
+        box next to its usual one. As a "new" item, whoever stood in front of
+        it was taken for its owner on sight - and it alarmed when they left.
+        Detections already tracked win; then the most confident.
+        """
+        ordered = sorted(objects, key=lambda d: (d.track_id not in self.tracks, -d.confidence))
+        kept: List[Detection] = []
+        for detection in ordered:
+            if any(overlap_of_smaller(detection.box, k.box) >= self.params.reid_iou for k in kept):
+                continue
+            kept.append(detection)
+        return kept
+
     def _adopt(self, detection: Detection, frame_ids: set) -> Optional[TrackState]:
         """Carry a dropped track's state over to the new id the tracker gave it.
 
@@ -293,9 +310,14 @@ class AbandonmentTracker:
         """
         best, best_iou = None, self.params.reid_iou
         for state in self.tracks.values():
-            if state.track_id in frame_ids:
+            # Only a still object is "the same object" by position: a bag being
+            # carried has moved on, and whatever appears where it was last seen
+            # must not inherit its owners.
+            if state.track_id in frame_ids or state.static_since is None:
                 continue
-            overlap = iou(detection.box, state.box)
+            # Overlap of the smaller box, so a partial view of the object (a
+            # box inside its usual one) is recognised as the same object.
+            overlap = overlap_of_smaller(detection.box, state.box)
             if overlap >= best_iou:
                 best, best_iou = state, overlap
         if best is None:

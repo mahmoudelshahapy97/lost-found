@@ -297,9 +297,8 @@ DB_HOST=127.0.0.1 DB_PORT=5455 pytest
   measured in wall-clock seconds, so lowering the rate saves CPU without changing when alerts fire.
 - The detector is COCO `models/yolo26l.pt` (`YOLO_MODEL_PATH`), watching 24 backpack, 25 umbrella,
   26 handbag, 28 suitcase and 67 cell phone. `CLASS_NAME_MAP` stores the three bag classes as `bag`
-  and cell phone as `mobile_phone`. The custom `models/lost_found.pt` (0 person, 1 wallet,
-  2 hand_watch, 3 key, 4 Glasses, 5 bag, 6 umbrella, 7 mobile_phone) is kept for when it is
-  retrained; switching back means changing the path, `OBJECT_CLASS_IDS` and `CLASS_NAME_MAP`.
+  and cell phone as `mobile_phone`. Every model used so far, why it was replaced, and how to
+  switch is recorded in [models/README.md](models/README.md).
 - `YOLO_TRACKER` points at [trackers/lostfound_bytetrack.yaml](trackers/lostfound_bytetrack.yaml),
   tuned so small, low-confidence static objects start a track and keep one id at 5 fps.
   `YOLO_CONFIDENCE` stays at or below its `track_low_thresh`.

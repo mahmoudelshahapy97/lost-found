@@ -38,8 +38,8 @@ export const TRACK_STATUS = {
 /**
  * Item types a lost report can name. The live detector (COCO yolo26l, see
  * OBJECT_CLASS_IDS / CLASS_NAME_MAP in backend/.env) produces bag, umbrella and
- * mobile_phone; wallet, hand_watch, key and Glasses come from the custom
- * lost_found.pt classes and still match found items on colour and time.
+ * mobile_phone. Wallet, hand_watch, key and Glasses are not detected by it but
+ * stay reportable: such reports still match found items on colour, time and photo.
  */
 export const OBJECT_CLASSES = [
   "wallet",

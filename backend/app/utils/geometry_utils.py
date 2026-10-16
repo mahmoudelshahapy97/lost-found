@@ -22,6 +22,22 @@ def box_area(box: Box) -> float:
     return max(0.0, x2 - x1) * max(0.0, y2 - y1)
 
 
+def overlap_of_smaller(a: Box, b: Box) -> float:
+    """Intersection over the smaller box's area: 1 when one box lies inside the other.
+
+    IoU misses a partial view of the same object - a bag half hidden behind a
+    passer-by gets a box well inside its usual one, with a low IoU.
+    """
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    inter_w = min(ax2, bx2) - max(ax1, bx1)
+    inter_h = min(ay2, by2) - max(ay1, by1)
+    if inter_w <= 0 or inter_h <= 0:
+        return 0.0
+    smaller = min(box_area(a), box_area(b))
+    return (inter_w * inter_h) / smaller if smaller > 0 else 0.0
+
+
 def iou(a: Box, b: Box) -> float:
     """Intersection over union of two boxes."""
     ax1, ay1, ax2, ay2 = a

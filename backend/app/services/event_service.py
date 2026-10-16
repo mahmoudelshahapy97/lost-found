@@ -4,14 +4,16 @@
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from uuid import UUID
 
 import numpy as np
 
 from app.core.config import config
 from app.core.database import db_manager
+from app.services import media_service
 from app.services.abandonment_service import AbandonmentEvent
+from app.services.object_store import crop_key, frame_key
 from app.utils.color_utils import dominant_color
 from app.utils import visual_similarity
 from app.utils.image_utils import annotate_abandoned, bytes_to_base64, crop_box, encode_jpeg
@@ -57,9 +59,9 @@ class EventService:
         query = """
             INSERT INTO abandoned_event (
                 camera_id, track_key, class_name, confidence, bbox,
-                owner_track_id, first_seen_at, static_since, abandoned_at, frame_jpeg
+                owner_track_id, first_seen_at, static_since, abandoned_at
             )
-            VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9)
             ON CONFLICT (camera_id, track_key) DO NOTHING
             RETURNING event_id, camera_id, track_key, class_name, confidence,
                       bbox, owner_track_id, first_seen_at, abandoned_at, status
@@ -76,7 +78,6 @@ class EventService:
                 _to_datetime(event.first_seen_at),
                 _to_datetime(event.static_since),
                 _to_datetime(event.abandoned_at),
-                annotated_jpeg,
             ),
             fetch_one=True,
         )
@@ -89,6 +90,12 @@ class EventService:
             )
             return None
 
+        await media_service.save_image(
+            media_service.EVENT_FRAME,
+            stored["event_id"],
+            frame_key(camera_id, stored["event_id"]),
+            annotated_jpeg,
+        )
         await self._create_found_item(stored["event_id"], camera_id, event.class_name, crop, features)
         logger.info(
             "Recorded abandoned %s on camera %s (event %s)",
@@ -116,9 +123,9 @@ class EventService:
 
         query = """
             INSERT INTO found_item (
-                event_id, camera_id, class_name, dominant_color, crop_jpeg, phash, color_hist
+                event_id, camera_id, class_name, dominant_color, phash, color_hist
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING found_id
         """
         result = await self.db_manager.execute_query(
@@ -128,13 +135,17 @@ class EventService:
                 camera_id,
                 class_name,
                 color,
-                crop_jpeg,
                 features.phash if features else None,
                 features.histogram_bytes if features else None,
             ),
             fetch_one=True,
         )
-        return result["found_id"] if result else None
+        if not result:
+            return None
+        await media_service.save_image(
+            media_service.FOUND_CROP, result["found_id"], crop_key(camera_id, result["found_id"]), crop_jpeg
+        )
+        return result["found_id"]
 
     # ---------------------------------------------------------------- queries
     async def list_events(
@@ -174,14 +185,14 @@ class EventService:
             fetch_one=True,
         )
 
-        frame_column = ", e.frame_jpeg" if include_frame else ""
+        frame_column = ", e.frame_key, e.frame_jpeg" if include_frame else ""
         params.extend([per_page, (page - 1) * per_page])
         rows = await self.db_manager.execute_query(
             f"""
             SELECT e.event_id, e.camera_id, c.name AS camera_name, e.track_key,
                    e.class_name, e.confidence, e.bbox, e.owner_track_id,
                    e.first_seen_at, e.abandoned_at, e.status,
-                   e.clip_path IS NOT NULL AS has_clip,
+                   (e.clip_key IS NOT NULL OR e.clip_path IS NOT NULL) AS has_clip,
                    f.found_id, f.dominant_color{frame_column}
             FROM abandoned_event e
             LEFT JOIN camera c ON c.camera_id = e.camera_id
@@ -198,17 +209,16 @@ class EventService:
             "total": total["total"] if total else 0,
             "page": page,
             "per_page": per_page,
-            "events": [self._serialize_event(row) for row in rows],
+            "events": [self._serialize_event(await self._with_frame(row)) for row in rows],
         }
 
     async def get_event(
         self, event_id: UUID, include_frame: bool = True
     ) -> Optional[Dict[str, Any]]:
-        frame_column = ", e.frame_jpeg" if include_frame else ""
         row = await self.db_manager.execute_query(
             f"""
-            SELECT e.*, e.clip_path IS NOT NULL AS has_clip,
-                   c.name AS camera_name, f.found_id, f.dominant_color{frame_column}
+            SELECT e.*, (e.clip_key IS NOT NULL OR e.clip_path IS NOT NULL) AS has_clip,
+                   c.name AS camera_name, f.found_id, f.dominant_color
             FROM abandoned_event e
             LEFT JOIN camera c ON c.camera_id = e.camera_id
             LEFT JOIN found_item f ON f.event_id = e.event_id
@@ -217,29 +227,45 @@ class EventService:
             (event_id,),
             fetch_one=True,
         )
-        return self._serialize_event(row) if row else None
+        if not row:
+            return None
+        if not include_frame:
+            row = {k: v for k, v in row.items() if k not in ("frame_jpeg", "frame_key")}
+        return self._serialize_event(await self._with_frame(row))
+
+    @staticmethod
+    async def _with_frame(row: Dict[str, Any]) -> Dict[str, Any]:
+        """Swap the frame's key/bytes for the image itself (from MinIO when it is there)."""
+        if "frame_key" not in row and "frame_jpeg" not in row:
+            return row
+        row = dict(row)
+        row["frame_jpeg"] = await media_service.load(row.pop("frame_key", None), row.get("frame_jpeg"))
+        return row
 
     async def get_event_frame(self, event_id: UUID) -> Optional[bytes]:
-        row = await self.db_manager.execute_query(
-            "SELECT frame_jpeg FROM abandoned_event WHERE event_id = $1",
-            (event_id,),
-            fetch_one=True,
-        )
-        return bytes(row["frame_jpeg"]) if row and row["frame_jpeg"] else None
+        return await media_service.load_image(media_service.EVENT_FRAME, event_id)
 
     async def set_clip_path(self, event_id: UUID, clip_path: Optional[str]) -> None:
+        """Clip kept on disk (MinIO was unreachable)."""
         await self.db_manager.execute_query(
             "UPDATE abandoned_event SET clip_path = $1 WHERE event_id = $2",
             (clip_path, event_id),
         )
 
-    async def get_clip_path(self, event_id: UUID) -> Optional[str]:
+    async def set_clip_key(self, event_id: UUID, clip_key: Optional[str]) -> None:
+        await self.db_manager.execute_query(
+            "UPDATE abandoned_event SET clip_key = $1 WHERE event_id = $2",
+            (clip_key, event_id),
+        )
+
+    async def get_clip_location(self, event_id: UUID) -> Tuple[Optional[str], Optional[str]]:
+        """(MinIO key, on-disk path) of the event's clip; either may be None."""
         row = await self.db_manager.execute_query(
-            "SELECT clip_path FROM abandoned_event WHERE event_id = $1",
+            "SELECT clip_key, clip_path FROM abandoned_event WHERE event_id = $1",
             (event_id,),
             fetch_one=True,
         )
-        return row["clip_path"] if row else None
+        return (row["clip_key"], row["clip_path"]) if row else (None, None)
 
     async def update_status(self, event_id: UUID, status: str) -> Optional[Dict[str, Any]]:
         row = await self.db_manager.execute_query(
@@ -278,6 +304,9 @@ class EventService:
         # The on-disk path is an implementation detail; clients get has_clip and
         # fetch the file through /events/{id}/clip.
         event.pop("clip_path", None)
+        event.pop("clip_key", None)
+        event.pop("frame_key", None)
+        event.pop("crop_jpeg", None)
         bbox = event.get("bbox")
         if isinstance(bbox, str):
             try:

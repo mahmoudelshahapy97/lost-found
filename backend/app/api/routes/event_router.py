@@ -4,12 +4,13 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
+from fastapi.responses import FileResponse, StreamingResponse
 
 from app.api.deps import get_image_viewer, require_role
 from app.schemas.event_schemas import EventListResponse, EventStatusUpdate
 from app.services.event_service import event_service
+from app.services.object_store import object_store
 from app.services.stream_manager import clip_root
 from app.utils.response import create_response
 
@@ -96,13 +97,20 @@ async def get_event_frame(
     responses={200: {"content": {"video/mp4": {}}, "description": "Evidence clip"}},
 )
 async def get_event_clip(
-    event_id: UUID, current_user: Dict[str, Any] = Depends(get_image_viewer)
-) -> FileResponse:
+    event_id: UUID,
+    range_header: Optional[str] = Header(None, alias="Range"),
+    current_user: Dict[str, Any] = Depends(get_image_viewer),
+) -> Response:
     """Annotated mp4 from before the item was left until after the alert.
 
-    Served with Range support, so a ``<video>`` element can seek.
+    Served with Range support, so a ``<video>`` element can seek - from MinIO,
+    or from disk for a clip saved while MinIO was unreachable.
     """
-    relative = await event_service.get_clip_path(event_id)
+    key, relative = await event_service.get_clip_location(event_id)
+    if key:
+        size = await object_store.size(key)
+        if size:
+            return _stream_object(key, size, range_header, event_id)
     if not relative:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="No clip recorded for this event."
@@ -135,3 +143,45 @@ async def update_event_status(
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
     return create_response(True, "Event status updated.", updated)
+
+
+def parse_range(header: Optional[str], size: int) -> Optional[tuple]:
+    """(start, end) inclusive for a single ``bytes=`` range, None for the whole file.
+
+    Raises ValueError for a range that cannot be satisfied.
+    """
+    if not header or not header.startswith("bytes=") or "," in header:
+        return None
+    first, _, last = header[len("bytes="):].strip().partition("-")
+    if not first:  # suffix range: the last N bytes
+        length = int(last)
+        if length <= 0:
+            raise ValueError("empty suffix range")
+        return max(0, size - length), size - 1
+    start = int(first)
+    end = min(int(last), size - 1) if last else size - 1
+    if start >= size or start > end:
+        raise ValueError("range outside the file")
+    return start, end
+
+
+def _stream_object(key: str, size: int, range_header: Optional[str], event_id: UUID) -> Response:
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Disposition": f'inline; filename="event-{event_id}.mp4"',
+    }
+    try:
+        span = parse_range(range_header, size)
+    except ValueError:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+    start, end = span if span else (0, size - 1)
+    length = end - start + 1
+    headers["Content-Length"] = str(length)
+    if span:
+        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    return StreamingResponse(
+        object_store.iter_range(key, start, length),
+        status_code=206 if span else 200,
+        media_type="video/mp4",
+        headers=headers,
+    )

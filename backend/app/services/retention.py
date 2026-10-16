@@ -1,11 +1,14 @@
 # app/services/retention.py
 """Bounded storage for evidence clips.
 
-A monitoring service that only ever writes video eventually fills its disk and
-takes detection down with it. Each pass deletes clips older than
+A monitoring service that only ever writes video eventually fills its storage
+and takes detection down with it. Each pass deletes clips older than
 CLIP_RETENTION_DAYS, then the oldest clips until the total is under
-CLIP_MAX_TOTAL_MB, and clears ``clip_path`` on the events that pointed at them.
-Event rows, frames and found items are kept: only the video goes.
+CLIP_MAX_TOTAL_MB, and clears the reference on the events that pointed at them.
+It runs over both places a clip can live: MinIO (``clip_key``) and, for clips
+saved while MinIO was unreachable, the clip directory on disk (``clip_path``);
+each gets the full budget. Event rows, frames and found items are kept: only
+the video goes.
 
 Turn it off with RETENTION_ENABLED=false where an external archiver owns the data.
 """
@@ -19,6 +22,7 @@ from typing import List, Optional, Tuple
 
 from app.core.config import config
 from app.core.database import db_manager
+from app.services.object_store import object_store
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +74,14 @@ def select_expired(
     return expired
 
 
+def _unlink_all(paths: List[Path]) -> None:
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as e:
+            logger.warning("Could not delete clip %s: %s", path, e)
+
+
 def _delete(files: List[Tuple[float, int, Path]], root: Path) -> Tuple[List[str], int]:
     removed, reclaimed = [], 0
     for _, size, path in files:
@@ -85,6 +97,49 @@ def _delete(files: List[Tuple[float, int, Path]], root: Path) -> Tuple[List[str]
 async def purge_old_clips() -> PurgeReport:
     """Run one retention pass. Never raises -- a purge failure is not fatal."""
     report = PurgeReport()
+    await _purge_stored_clips(report)
+    await _purge_disk_clips(report)
+    if report.clips_deleted:
+        logger.info("Retention pass: %s", report.as_dict())
+    return report
+
+
+async def _purge_stored_clips(report: PurgeReport) -> None:
+    if not object_store.enabled:
+        return
+    try:
+        objects = await object_store.list("clips/")
+        expired = select_expired(
+            objects,
+            time.time(),
+            config.clip_retention_days * 86400,
+            config.clip_max_total_mb * 1024 * 1024,
+        )
+        if not expired:
+            return
+        removed = await object_store.remove([key for _, _, key in expired])
+        if removed:
+            # The clip has expired, so its disk copy (kept from before the move
+            # to MinIO) goes too - otherwise only the copy in MinIO would age out.
+            rows = await db_manager.execute_query(
+                "SELECT clip_path FROM abandoned_event WHERE clip_key = ANY($1::text[]) AND clip_path IS NOT NULL",
+                (removed,),
+                fetch_all=True,
+            )
+            await db_manager.execute_query(
+                "UPDATE abandoned_event SET clip_key = NULL, clip_path = NULL WHERE clip_key = ANY($1::text[])",
+                (removed,),
+            )
+            root = Path(config.clip_dir)
+            await asyncio.to_thread(_unlink_all, [root / r["clip_path"] for r in rows or []])
+        sizes = {key: size for _, size, key in expired}
+        report.clips_deleted += len(removed)
+        report.bytes_reclaimed += sum(sizes[key] for key in removed)
+    except Exception:
+        logger.exception("Clip retention pass over MinIO failed")
+
+
+async def _purge_disk_clips(report: PurgeReport) -> None:
     try:
         root = Path(config.clip_dir)
         files = await asyncio.to_thread(_scan, root)
@@ -95,19 +150,17 @@ async def purge_old_clips() -> PurgeReport:
             config.clip_max_total_mb * 1024 * 1024,
         )
         if not expired:
-            return report
+            return
         removed, reclaimed = await asyncio.to_thread(_delete, expired, root)
         if removed:
             await db_manager.execute_query(
                 "UPDATE abandoned_event SET clip_path = NULL WHERE clip_path = ANY($1::text[])",
                 (removed,),
             )
-        report.clips_deleted = len(removed)
-        report.bytes_reclaimed = reclaimed
-        logger.info("Retention pass: %s", report.as_dict())
+        report.clips_deleted += len(removed)
+        report.bytes_reclaimed += reclaimed
     except Exception:
-        logger.exception("Clip retention pass failed")
-    return report
+        logger.exception("Clip retention pass over the clip directory failed")
 
 
 async def _loop() -> None:

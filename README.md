@@ -75,6 +75,46 @@ the event page, and are served at `GET /api/v1/events/{id}/clip`. A retention pa
 deletes clips older than `CLIP_RETENTION_DAYS` and keeps the total under
 `CLIP_MAX_TOTAL_MB`. The event row, frame and found item are kept.
 
+## Object storage (MinIO)
+
+The `minio` service is S3-compatible storage for images and videos. On first start,
+`minio-init` creates the bucket (`MINIO_BUCKET`, default `lostfound`) and exits.
+
+| | Address |
+|---|---|
+| S3 API, from other containers | `http://minio:9000` |
+| S3 API, from the host | `http://localhost:9000` (`MINIO_API_HOST_PORT`) |
+| Web console | `http://localhost:9001` (`MINIO_CONSOLE_HOST_PORT`) |
+
+Log in with `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` from the root `.env`. The api
+container receives the same values as `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`,
+`MINIO_BUCKET` and `MINIO_SECURE`. Data lives in the `miniodata` volume.
+
+Images and videos are stored in MinIO, and Postgres keeps the records plus each object's key:
+
+| Object | Key | Postgres column |
+|---|---|---|
+| Alert frame | `frames/<camera_id>/<event_id>.jpg` | `abandoned_event.frame_key` |
+| Found-item crop | `crops/<camera_id>/<found_id>.jpg` | `found_item.crop_key` |
+| Evidence clip | `clips/<camera_id>/<event_id>.mp4` | `abandoned_event.clip_key` |
+| Lost-report photo | `lost/<lost_id>.jpg` | `lost_item.photo_key` |
+
+If MinIO is unreachable when something is saved, it goes to the old place instead: image bytes in
+Postgres (`frame_jpeg`, `crop_jpeg`, `photo_jpeg`) or the clip file on disk (`clip_path`). Reads
+try MinIO first and then that fallback. Clip retention trims both places. Deleting a camera removes
+its objects as well.
+
+Data from before MinIO was copied over with `backend/tools/migrate_media_to_minio.py`. The tool
+can be re-run and only copies rows that don't have a key yet. The original bytes and files are
+kept. To drop them once you're satisfied:
+
+```bash
+docker compose exec -w /app api python tools/migrate_media_to_minio.py --cleanup
+```
+
+MinIO no longer publishes community images, so the service runs Chainguard's build of MinIO,
+pinned by digest in `docker-compose.yml`.
+
 ## Tests
 
 ```bash

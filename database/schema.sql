@@ -70,8 +70,10 @@ CREATE TABLE IF NOT EXISTS abandoned_event (
     first_seen_at   TIMESTAMPTZ NOT NULL,
     static_since    TIMESTAMPTZ,
     abandoned_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    frame_jpeg      BYTEA,                   -- annotated full frame
-    clip_path       TEXT,                    -- evidence mp4 under CLIP_DIR, NULL until encoded
+    frame_jpeg      BYTEA,                   -- annotated full frame (fallback when MinIO is down)
+    frame_key       TEXT,                    -- the frame in MinIO: frames/<camera>/<event>.jpg
+    clip_path       TEXT,                    -- evidence mp4 under CLIP_DIR (fallback when MinIO is down)
+    clip_key        TEXT,                    -- the clip in MinIO: clips/<camera>/<event>.mp4
     status          TEXT NOT NULL DEFAULT 'OPEN'
                     CHECK (status IN ('OPEN', 'ACKNOWLEDGED', 'RESOLVED', 'FALSE_POSITIVE')),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -101,7 +103,8 @@ CREATE TABLE IF NOT EXISTS found_item (
     camera_id       UUID REFERENCES camera (camera_id) ON DELETE SET NULL,
     class_name      TEXT NOT NULL,
     dominant_color  TEXT,
-    crop_jpeg       BYTEA,
+    crop_jpeg       BYTEA,              -- fallback when MinIO is down
+    crop_key        TEXT,               -- crops/<camera>/<found>.jpg in MinIO
     -- Visual features of the item for photo matching (utils/visual_similarity):
     -- 64-bit perceptual hash and HSV histogram as float32 bytes.
     phash           BIGINT,
@@ -131,7 +134,8 @@ CREATE TABLE IF NOT EXISTS lost_item (
     description     TEXT,
     class_name      TEXT,
     dominant_color  TEXT,
-    photo_jpeg      BYTEA,
+    photo_jpeg      BYTEA,              -- fallback when MinIO is down
+    photo_key       TEXT,               -- lost/<lost>.jpg in MinIO
     phash           BIGINT,             -- features of the photo, as on found_item
     color_hist      BYTEA,
     lost_after      TIMESTAMPTZ,        -- narrows the found-item search window
@@ -244,7 +248,8 @@ COMMIT;
 -- found_item and lost_item; the api drops those columns from an existing
 -- database at startup (SCHEMA_UPGRADES in app/core/database.py).
 --
--- frame_jpeg and crop_jpeg are BYTEA, so the images live in the row. That keeps
--- deployment to one service at the cost of table size; queries.sql carries both
--- the size query and the purge that reclaims it.
+-- Images and videos live in MinIO (the *_key columns). The BYTEA columns and
+-- clip_path are the fallback the api writes when MinIO is unreachable, and
+-- hold data from before the move until it is cleaned up;
+-- backend/tools/migrate_media_to_minio.py copies them into MinIO.
 -- ---------------------------------------------------------------------------

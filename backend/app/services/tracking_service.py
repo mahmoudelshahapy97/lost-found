@@ -135,7 +135,11 @@ class ObjectTracker:
         return best
 
     def _forget_loose(self) -> None:
-        horizon = self._tracker.max_frames_lost
+        # Short on purpose: this only bridges flicker. Longer gaps of a still
+        # object are bridged by the abandonment tracker, which checks the object
+        # was still; reusing an id here for whatever appears at a spot many
+        # seconds later handed a carried bag's owners to a different object.
+        horizon = config.loose_track_max_gap_frames
         for track_id in [k for k, (_, seen) in self._loose.items() if self._frame - seen > horizon]:
             del self._loose[track_id]
 

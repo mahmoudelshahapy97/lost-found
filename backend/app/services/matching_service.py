@@ -28,6 +28,8 @@ import numpy as np
 
 from app.core.config import config
 from app.core.database import db_manager
+from app.services import media_service
+from app.services.object_store import photo_key
 from app.utils import visual_similarity
 from app.utils.color_utils import color_agreement, color_from_text, dominant_color
 from app.utils.geometry_utils import iou
@@ -175,13 +177,13 @@ class MatchingService:
         query = """
             INSERT INTO lost_item (
                 reporter_name, reporter_email, description, class_name, dominant_color,
-                photo_jpeg, lost_after, phash, color_hist
+                lost_after, phash, color_hist
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING lost_id, reporter_name, reporter_email, description, class_name,
                       dominant_color, lost_after, reported_at, status
         """
-        return await self.db_manager.execute_query(
+        report = await self.db_manager.execute_query(
             query,
             (
                 reporter_name,
@@ -189,28 +191,32 @@ class MatchingService:
                 description,
                 class_name,
                 color,
-                photo_jpeg,
                 lost_after,
                 features.phash if features else None,
                 features.histogram_bytes if features else None,
             ),
             fetch_one=True,
         )
+        if report:
+            await media_service.save_image(
+                media_service.LOST_PHOTO, report["lost_id"], photo_key(report["lost_id"]), photo_jpeg
+            )
+        return report
 
     async def get_lost_item(self, lost_id: UUID, include_photo: bool = False) -> Optional[Dict]:
-        photo_column = ", photo_jpeg" if include_photo else ""
         row = await self.db_manager.execute_query(
-            f"""
+            """
             SELECT lost_id, reporter_name, reporter_email, description, class_name,
-                   dominant_color, lost_after, reported_at, status{photo_column}
+                   dominant_color, lost_after, reported_at, status
             FROM lost_item WHERE lost_id = $1
             """,
             (lost_id,),
             fetch_one=True,
         )
-        if row and "photo_jpeg" in row:
+        if row and include_photo:
             row = dict(row)
-            row["photo_base64"] = bytes_to_base64(row.pop("photo_jpeg"))
+            photo = await media_service.load_image(media_service.LOST_PHOTO, lost_id)
+            row["photo_base64"] = bytes_to_base64(photo)
         return row
 
     async def list_lost_items(
@@ -277,7 +283,11 @@ class MatchingService:
                    OR f.class_name = $1 OR f.dominant_color = $2
                    OR ($2::text IN ('black', 'gray', 'brown')
                        AND f.dominant_color IN ('black', 'gray', 'brown')))
-            ORDER BY f.found_at
+            -- The pool is capped, so fill it with the likeliest items first:
+            -- same type and colour, then the soonest after the loss.
+            ORDER BY (f.class_name = $1) IS TRUE DESC,
+                     (f.dominant_color = $2) IS TRUE DESC,
+                     f.found_at
             LIMIT $4
             """,
             (class_name, color, report["lost_after"], _MAX_CANDIDATES),
@@ -322,14 +332,15 @@ class MatchingService:
         if not missing:
             return
         crops = await self.db_manager.execute_query(
-            "SELECT found_id, crop_jpeg FROM found_item WHERE found_id = ANY($1::uuid[])",
+            "SELECT found_id, crop_key, crop_jpeg FROM found_item WHERE found_id = ANY($1::uuid[])",
             ([row["found_id"] for row in missing],),
             fetch_all=True,
         )
         keep = 1.0 / (1.0 + 2.0 * config.crop_context_ratio)
         by_id = {row["found_id"]: row for row in missing}
         for crop in crops or []:
-            image = decode_jpeg(bytes(crop["crop_jpeg"])) if crop["crop_jpeg"] else None
+            data = await media_service.load(crop["crop_key"], crop["crop_jpeg"])
+            image = decode_jpeg(data) if data else None
             features = visual_similarity.extract(image, keep=keep)
             if features is None:
                 continue
@@ -450,10 +461,7 @@ class MatchingService:
         }
 
     async def get_found_crop(self, found_id: UUID) -> Optional[bytes]:
-        row = await self.db_manager.execute_query(
-            "SELECT crop_jpeg FROM found_item WHERE found_id = $1", (found_id,), fetch_one=True
-        )
-        return bytes(row["crop_jpeg"]) if row and row["crop_jpeg"] else None
+        return await media_service.load_image(media_service.FOUND_CROP, found_id)
 
 
 matching_service = MatchingService()

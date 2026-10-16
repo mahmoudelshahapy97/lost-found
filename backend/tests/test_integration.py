@@ -31,6 +31,7 @@ from app.services.analytics_service import analytics_service
 from app.services.camera_service import camera_service
 from app.services.event_service import event_service
 from app.services.matching_service import matching_service
+from app.services.object_store import object_store
 
 pytestmark = pytest.mark.asyncio
 
@@ -79,6 +80,8 @@ async def camera(database):
     )
     yield created
     await camera_service.delete_camera(created["camera_id"])
+    for prefix in ("frames", "crops", "clips"):
+        await object_store.remove_prefix(f"{prefix}/{created['camera_id']}/")
 
 
 # ------------------------------------------------------------------- cameras
@@ -145,6 +148,79 @@ async def test_record_event_creates_event_and_found_item(camera):
     listed = await event_service.list_events(camera_id=camera["camera_id"])
     assert listed["total"] == 1
     assert listed["events"][0]["bbox"]["x1"] == 100.0
+
+
+def _event(track_id: int = 7) -> AbandonmentEvent:
+    return AbandonmentEvent(
+        track_id=track_id,
+        class_name="bag",
+        confidence=0.8,
+        box=(100.0, 100.0, 200.0, 220.0),
+        first_seen_at=1_700_000_000.0,
+        static_since=1_700_000_005.0,
+        abandoned_at=1_700_000_040.0,
+        owner_track_id=1,
+        unattended_seconds=35.0,
+    )
+
+
+async def _media_columns(event_id):
+    return await db_manager.execute_query(
+        """
+        SELECT e.frame_key, e.frame_jpeg IS NOT NULL AS frame_in_db,
+               f.found_id, f.crop_key, f.crop_jpeg IS NOT NULL AS crop_in_db
+        FROM abandoned_event e JOIN found_item f ON f.event_id = e.event_id
+        WHERE e.event_id = $1
+        """,
+        (event_id,),
+        fetch_one=True,
+    )
+
+
+async def test_event_media_is_stored_in_minio_with_keys_in_postgres(camera):
+    if not object_store.enabled or not await object_store.healthy():
+        pytest.skip("MinIO not configured or not reachable")
+    frame = np.full((480, 640, 3), 120, dtype=np.uint8)
+
+    stored = await event_service.record_event(camera["camera_id"], _event(), frame)
+    row = await _media_columns(stored["event_id"])
+
+    assert row["frame_key"] == f"frames/{camera['camera_id']}/{stored['event_id']}.jpg"
+    assert row["crop_key"] == f"crops/{camera['camera_id']}/{row['found_id']}.jpg"
+    assert not row["frame_in_db"] and not row["crop_in_db"]  # MinIO only
+    assert (await object_store.get_bytes(row["frame_key"]))[:2] == b"\xff\xd8"
+    assert (await event_service.get_event_frame(stored["event_id"]))[:2] == b"\xff\xd8"
+    assert (await matching_service.get_found_crop(row["found_id"]))[:2] == b"\xff\xd8"
+
+
+async def test_event_media_falls_back_to_postgres_when_minio_is_down(camera, monkeypatch):
+    monkeypatch.setattr(config, "minio_endpoint", "")  # store "unreachable"
+    frame = np.full((480, 640, 3), 120, dtype=np.uint8)
+
+    stored = await event_service.record_event(camera["camera_id"], _event(8), frame)
+    row = await _media_columns(stored["event_id"])
+
+    assert row["frame_key"] is None and row["crop_key"] is None
+    assert row["frame_in_db"] and row["crop_in_db"]
+    assert (await event_service.get_event_frame(stored["event_id"]))[:2] == b"\xff\xd8"
+
+
+async def test_lost_photo_round_trips_through_minio(database):
+    if not object_store.enabled or not await object_store.healthy():
+        pytest.skip("MinIO not configured or not reachable")
+    photo = np.full((120, 90, 3), (160, 40, 120), dtype=np.uint8)
+
+    report = await matching_service.create_lost_item(image=photo, description="purple bag")
+    _CREATED.append(("lost_item", "lost_id", report["lost_id"]))
+    try:
+        fetched = await matching_service.get_lost_item(report["lost_id"], include_photo=True)
+        key = (await db_manager.execute_query(
+            "SELECT photo_key FROM lost_item WHERE lost_id = $1", (report["lost_id"],), fetch_one=True
+        ))["photo_key"]
+        assert key == f"lost/{report['lost_id']}.jpg"
+        assert fetched["photo_base64"]
+    finally:
+        await object_store.remove([f"lost/{report['lost_id']}.jpg"])
 
 
 async def test_record_event_is_idempotent(camera):
@@ -232,8 +308,10 @@ async def test_rules_rank_same_type_and_colour_first(camera):
     )
     lost_id = await _insert_lost_item("bag", "black", lost_after=lost_at)
 
+    # A shared database holds live detections too; ask for the whole pool so
+    # both test items are in the ranking whatever else is there.
     matches = await matching_service.find_matches_for_lost_item(
-        lost_id, top_k=50, min_score=0.0, persist=False
+        lost_id, top_k=10_000, min_score=0.0, persist=False
     )
     by_id = {m["found_id"]: m for m in matches}
 

@@ -256,3 +256,29 @@ def test_item_without_a_crop_counts_as_neutral_when_the_report_has_a_photo():
     assert unseen["visual_similarity"] is None
     assert unseen["score"] == pytest.approx((0.5 + 0.3 + 0.2 * (1 - 1 / 72) + 0.3 * 0.5) / 1.3, abs=1e-4)
     assert alike["score"] > unseen["score"]
+
+
+# ------------------------------------------------------------ clip range header
+@pytest.mark.parametrize(
+    "header, expected",
+    [
+        (None, None),
+        ("bytes=0-", (0, 999)),
+        ("bytes=100-199", (100, 199)),
+        ("bytes=900-5000", (900, 999)),  # end clamped to the file
+        ("bytes=-100", (900, 999)),  # suffix: last 100 bytes
+        ("bytes=0-1,5-9", None),  # multi-range: send the whole file
+    ],
+)
+def test_clip_range_parsing(header, expected):
+    from app.api.routes.event_router import parse_range
+
+    assert parse_range(header, 1000) == expected
+
+
+@pytest.mark.parametrize("header", ["bytes=1000-", "bytes=500-100", "bytes=-0"])
+def test_unsatisfiable_clip_range(header):
+    from app.api.routes.event_router import parse_range
+
+    with pytest.raises(ValueError):
+        parse_range(header, 1000)
