@@ -61,10 +61,12 @@ async def effective_config() -> Dict[str, Any]:
                 "target_process_fps": config.target_process_fps,
             },
             "matching": {
-                "clip_model": f"{config.clip_model_name}/{config.clip_pretrained}",
-                "embedding_dim": config.embedding_dim,
                 "match_top_k": config.match_top_k,
-                "match_min_similarity": config.match_min_similarity,
+                "match_class_weight": config.match_class_weight,
+                "match_color_weight": config.match_color_weight,
+                "match_time_weight": config.match_time_weight,
+                "match_window_hours": config.match_window_hours,
+                "match_min_score": config.match_min_score,
             },
         },
     )

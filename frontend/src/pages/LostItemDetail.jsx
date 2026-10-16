@@ -27,7 +27,7 @@ import { errorMessage } from "../api/client";
 import { foundItems, lostItems as lostApi, matches as matchApi } from "../api/endpoints";
 import { useAuth } from "../auth/AuthContext";
 import { useAsync } from "../hooks/useAsync";
-import { DEFAULT_MIN_SIMILARITY } from "../utils/constants";
+import { DEFAULT_MIN_MATCH_SCORE } from "../utils/constants";
 import { formatDateTime, formatScore, fromNow, titleCase } from "../utils/format";
 
 function DetailRow({ label, children }) {
@@ -78,18 +78,25 @@ function MatchCard({ match, onConfirm, onReject, busy, canConfirm }) {
         />
 
         <Typography variant="caption" color="text.secondary" display="block">
-          Image similarity {formatScore(match.image_similarity)}
-          {match.text_similarity !== null && match.text_similarity !== undefined
-            ? ` · text ${formatScore(match.text_similarity)}`
-            : ""}
-        </Typography>
-        <Typography variant="caption" color="text.secondary" display="block">
           {match.camera_name || "Unknown camera"} · found {fromNow(match.found_at)}
         </Typography>
 
         <Stack direction="row" spacing={0.5} sx={{ mt: 1.5 }} flexWrap="wrap" useFlexGap>
-          {match.same_class ? <Chip size="small" variant="outlined" label="Same class" /> : null}
+          {match.same_class ? <Chip size="small" variant="outlined" label="Same type" /> : null}
           {match.same_color ? <Chip size="small" variant="outlined" label="Same colour" /> : null}
+          {match.visual_similarity != null ? (
+            <Tooltip title="How much the report photo looks like this crop (shape and colour)">
+              <Chip
+                size="small"
+                variant="outlined"
+                color={match.visual_similarity >= 0.6 ? "success" : "default"}
+                label={`Looks ${Math.round(match.visual_similarity * 100)}% alike`}
+              />
+            </Tooltip>
+          ) : null}
+          {match.sightings > 1 ? (
+            <Chip size="small" color="info" variant="outlined" label={`Seen ${match.sightings}×`} />
+          ) : null}
           {match.dominant_color ? (
             <Chip size="small" variant="outlined" label={titleCase(match.dominant_color)} />
           ) : null}
@@ -258,9 +265,10 @@ export default function LostItemDetail() {
               Candidates from the found gallery
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              Unclaimed items ranked by cosine similarity in CLIP space, then reranked with small
-              bonuses for a matching class and colour. Anything scoring below{" "}
-              {formatScore(DEFAULT_MIN_SIMILARITY)} is not shown.
+              Unclaimed items found after the loss, scored on the same object type (50%), a
+              matching colour (30%) and how soon after the loss they turned up (20%). Repeat
+              sightings of one object are shown once. Anything scoring below{" "}
+              {formatScore(DEFAULT_MIN_MATCH_SCORE, 0)} is not shown.
             </Typography>
           </Card>
 
@@ -285,12 +293,12 @@ export default function LostItemDetail() {
           ) : (
             <Card>
               <EmptyState
-                title="Nothing cleared the similarity bar"
-                description="Either the item has not been found yet, or no unclaimed crop in the gallery is close enough. Re-run this once new items come in — the gallery grows as cameras raise alerts."
+                title="No likely matches yet"
+                description="No unclaimed item found after the loss shares this report's type or colour. Re-run this once new items come in, or search the gallery by camera and time."
                 icon={<SearchIcon fontSize="inherit" />}
                 action={
-                  <Button component={RouterLink} to="/found-items" variant="outlined">
-                    Browse the whole gallery
+                  <Button component={RouterLink} to="/search" variant="outlined">
+                    Search the gallery
                   </Button>
                 }
               />

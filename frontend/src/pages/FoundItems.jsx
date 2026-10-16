@@ -68,7 +68,7 @@ export default function FoundItems() {
     <Box>
       <PageHeader
         title="Found gallery"
-        subtitle="Every object harvested from an alert, cropped and embedded so a lost report can be matched against it."
+        subtitle="Every object harvested from an alert. Use Search to filter by camera, date and time."
         actions={[
           <Button key="refresh" onClick={refresh} startIcon={<RefreshIcon />}>
             Refresh
@@ -202,7 +202,7 @@ export default function FoundItems() {
         <Card>
           <EmptyState
             title={hasFilters ? "Nothing matches these filters" : "The gallery is empty"}
-            description="Items land here automatically: every abandoned-object alert is cropped and embedded, and that crop becomes a searchable found item."
+            description="Items land here automatically: every abandoned-object alert is cropped, and that crop becomes a searchable found item."
             icon={<Inventory2Icon fontSize="inherit" />}
             action={
               hasFilters ? (

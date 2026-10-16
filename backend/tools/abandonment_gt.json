@@ -1,0 +1,12 @@
+{
+  "_comment": "Ground truth for backend/videos. Each item left behind: its centre in source pixels and the stream second its owner walks away. A clip with no items is a negative (any alert is a false alarm).",
+  "cctv_video1.mp4": [{"at": [159, 351], "unattended_from": 33}],
+  "cctv_video3.mp4": [{"at": [476, 388], "unattended_from": 14}],
+  "cctv_video20.mp4": [{"at": [443, 172], "unattended_from": 25}],
+  "Left-Behined Item 0001.mp4": [{"at": [438, 124], "unattended_from": 25}],
+  "Left-Behined Item 0002.mp4": [{"at": [568, 438], "unattended_from": 44}],
+  "Left-Behined Item 0003.mp4": [{"at": [348, 135], "unattended_from": 16}],
+  "Left-Behined Item 0004.mp4": [{"at": [415, 225], "unattended_from": 28}],
+  "Left-Behined Item 0005.mp4": [{"at": [355, 212], "unattended_from": 30}],
+  "sample.mp4": []
+}

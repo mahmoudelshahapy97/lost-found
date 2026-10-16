@@ -1,15 +1,15 @@
 # app/services/model_registry.py
-"""Lazy, thread-safe loading of the YOLO detector and the CLIP embedder.
+"""Thread-safe loading of the YOLO detector and resolution of the model device.
 
-CLIP is stateless, so a single shared instance serves every request. YOLO is
-*not*: ``model.track(persist=True)`` keeps tracker state on the model object, so
-each camera worker gets its own detector instance to prevent track-id crosstalk.
+YOLO is stateful: ``model.track(persist=True)`` keeps tracker state on the model
+object, so each camera worker gets its own detector instance to prevent
+track-id crosstalk.
 """
 
 import logging
 import os
 import threading
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 
 from app.core.config import config
 
@@ -18,8 +18,6 @@ logger = logging.getLogger(__name__)
 
 class ModelRegistry:
     def __init__(self) -> None:
-        self._clip_bundle: Optional[Tuple[Any, Any, Any]] = None
-        self._clip_lock = threading.Lock()
         self._yolo_lock = threading.Lock()
         self._device: Optional[str] = None
 
@@ -65,48 +63,6 @@ class ModelRegistry:
 
         logger.info("YOLO loaded (%s) on %s", weights, self.device)
         return model
-
-    # -------------------------------------------------------------------- clip
-    def get_clip(self) -> Tuple[Any, Any, Any]:
-        """Return the shared ``(model, preprocess, tokenizer)`` triple."""
-        if self._clip_bundle is not None:
-            return self._clip_bundle
-
-        with self._clip_lock:
-            if self._clip_bundle is not None:
-                return self._clip_bundle
-
-            import open_clip
-            import torch
-
-            os.makedirs(config.model_cache_dir, exist_ok=True)
-            model, _, preprocess = open_clip.create_model_and_transforms(
-                config.clip_model_name,
-                pretrained=config.clip_pretrained,
-                cache_dir=config.model_cache_dir,
-            )
-            tokenizer = open_clip.get_tokenizer(config.clip_model_name)
-
-            model = model.to(self.device)
-            model.eval()
-            torch.set_grad_enabled(False)
-
-            self._clip_bundle = (model, preprocess, tokenizer)
-            logger.info(
-                "CLIP loaded (%s / %s) on %s",
-                config.clip_model_name,
-                config.clip_pretrained,
-                self.device,
-            )
-            return self._clip_bundle
-
-    def warmup(self, load_clip: bool = True) -> None:
-        """Pay the model-loading cost at startup rather than on the first request."""
-        if load_clip:
-            try:
-                self.get_clip()
-            except Exception as e:
-                logger.error("CLIP warmup failed: %s", e, exc_info=True)
 
 
 model_registry = ModelRegistry()

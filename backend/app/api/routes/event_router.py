@@ -5,10 +5,12 @@ from typing import Any, Dict, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import FileResponse
 
 from app.api.deps import get_image_viewer, require_role
 from app.schemas.event_schemas import EventListResponse, EventStatusUpdate
 from app.services.event_service import event_service
+from app.services.stream_manager import clip_root
 from app.utils.response import create_response
 
 logger = logging.getLogger(__name__)
@@ -19,7 +21,7 @@ router = APIRouter(tags=["events"], prefix="/events")
 async def list_events(
     camera_id: Optional[UUID] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
-    class_name: Optional[str] = Query(None, description="backpack | handbag | suitcase"),
+    class_name: Optional[str] = Query(None, description="wallet | hand_watch | key | Glasses | bag | umbrella | mobile_phone"),
     start: Optional[datetime] = Query(None, description="ISO8601 lower bound on abandoned_at"),
     end: Optional[datetime] = Query(None, description="ISO8601 upper bound on abandoned_at"),
     include_frame: bool = Query(False, description="Embed the annotated frame as base64"),
@@ -87,6 +89,39 @@ async def get_event_frame(
             status_code=status.HTTP_404_NOT_FOUND, detail="No frame stored for this event."
         )
     return Response(content=jpeg, media_type="image/jpeg")
+
+
+@router.get(
+    "/{event_id}/clip",
+    responses={200: {"content": {"video/mp4": {}}, "description": "Evidence clip"}},
+)
+async def get_event_clip(
+    event_id: UUID, current_user: Dict[str, Any] = Depends(get_image_viewer)
+) -> FileResponse:
+    """Annotated mp4 from before the item was left until after the alert.
+
+    Served with Range support, so a ``<video>`` element can seek.
+    """
+    relative = await event_service.get_clip_path(event_id)
+    if not relative:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No clip recorded for this event."
+        )
+
+    root = clip_root().resolve()
+    path = (root / relative).resolve()
+    # clip_path is written by the worker, but never trust a path from the DB
+    # to stay inside the clip directory.
+    if not path.is_relative_to(root) or not path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Clip file is missing."
+        )
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        filename=f"event-{event_id}.mp4",
+        content_disposition_type="inline",
+    )
 
 
 @router.patch("/{event_id}/status")

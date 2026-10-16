@@ -27,7 +27,7 @@ test("the alert list renders the seeded events", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Alerts", level: 5 })).toBeVisible();
   // Six seeded events across four statuses; the table must show more than one.
   await expect(page.getByRole("row")).not.toHaveCount(1);
-  await expect(page.getByRole("cell", { name: "Backpack" }).first()).toBeVisible();
+  await expect(page.getByRole("cell", { name: "Bag" }).first()).toBeVisible();
 
   expect(problems, problems.join("\n")).toEqual([]);
 });
@@ -52,22 +52,22 @@ test("filtering by object type composes with the status filter", async ({ page }
   await page.goto("/events?status=OPEN");
 
   await page.getByLabel("Object").click();
-  await page.getByRole("option", { name: "Suitcase" }).click();
+  await page.getByRole("option", { name: "Umbrella" }).click();
 
   await expect(page).toHaveURL(/status=OPEN/);
-  await expect(page).toHaveURL(/class_name=suitcase/);
+  await expect(page).toHaveURL(/class_name=umbrella/);
 
   const rows = page.getByRole("row");
   const count = await rows.count();
   for (let index = 1; index < count; index += 1) {
-    await expect(rows.nth(index)).toContainText("Suitcase");
+    await expect(rows.nth(index)).toContainText("Umbrella");
   }
 });
 
 test("a filter combination with no matches says so rather than looking broken", async ({
   page,
 }) => {
-  await page.goto("/events?status=RESOLVED&class_name=backpack");
+  await page.goto("/events?status=RESOLVED&class_name=bag");
 
   await expect(page.getByText("Nothing matches these filters")).toBeVisible();
   // Two of these on screen: one in the filter bar, one in the empty state.
@@ -80,7 +80,7 @@ test("an alert opens to its detail, timeline and triage actions", async ({ page 
   const problems = collectPageProblems(page);
   await page.goto(`/events/${SEED.openEventId}`);
 
-  await expect(page.getByRole("heading", { name: /abandoned backpack/i, level: 5 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /abandoned bag/i, level: 5 })).toBeVisible();
   // exact: the frame caption also ends "...was declared abandoned", and a
   // substring match would resolve to two elements.
   await expect(page.getByText("First seen", { exact: true })).toBeVisible();
@@ -122,7 +122,7 @@ test("the found gallery renders the harvested crops", async ({ page }) => {
   await page.goto("/found-items");
 
   await expect(page.getByRole("heading", { name: "Found gallery", level: 5 })).toBeVisible();
-  await expect(page.getByText("Backpack").first()).toBeVisible();
+  await expect(page.getByText("Bag").first()).toBeVisible();
   // Every item carries a status; UNCLAIMED is what makes it a match candidate.
   await expect(page.getByText("Unclaimed").first()).toBeVisible();
 

@@ -6,7 +6,6 @@ venv/
 .env
 logs/
 *.log
-models/*.pt
 models/*.pth
 models/*.bin
 .ultralytics/
@@ -14,3 +13,4 @@ models/*.bin
 .coverage
 htmlcov/
 videos/*.mp4
+data/

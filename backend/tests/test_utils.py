@@ -1,9 +1,13 @@
-"""Geometry, colour and vector helper tests."""
+"""Geometry, colour, cropping and match-rule tests."""
 
+from datetime import datetime, timedelta, timezone
+
+import cv2
 import numpy as np
 import pytest
 
-from app.utils.color_utils import color_agreement, dominant_color
+from app.services.matching_service import collapse_repeat_sightings, score_candidate
+from app.utils.color_utils import color_agreement, color_from_text, dominant_color
 from app.utils.geometry_utils import (
     box_gap,
     box_in_polygon,
@@ -13,7 +17,8 @@ from app.utils.geometry_utils import (
     iou,
     point_in_polygon,
 )
-from app.utils.vector_utils import from_pgvector, to_pgvector
+from app.utils import visual_similarity
+from app.utils.image_utils import crop_box
 
 
 # ------------------------------------------------------------------- geometry
@@ -96,16 +101,158 @@ def test_color_agreement():
     assert not color_agreement(None, "blue")
 
 
-# --------------------------------------------------------------------- vectors
-def test_vector_roundtrip():
-    original = [0.125, -0.5, 0.75]
-    assert from_pgvector(to_pgvector(original)) == pytest.approx(original)
+def test_color_from_text():
+    assert color_from_text("black leather bag") == "black"
+    assert color_from_text("Dark-Blue umbrella") == "blue"
+    assert color_from_text("grey umbrella") == "gray"
+    assert color_from_text("leather bag") is None
+    assert color_from_text(None) is None
 
 
-def test_to_pgvector_formats_a_literal():
-    assert to_pgvector([1.0, 2.0]) == "[1.000000,2.000000]"
+# -------------------------------------------------------------------- crops
+def test_crop_context_ratio_widens_the_crop():
+    frame = np.zeros((400, 400, 3), dtype=np.uint8)
+    tight = crop_box(frame, (100.0, 100.0, 200.0, 180.0))
+    wide = crop_box(frame, (100.0, 100.0, 200.0, 180.0), context_ratio=0.15)
+    assert tight.shape[:2] == (96, 116)   # 8 px each side
+    assert wide.shape[:2] == (110, 130)   # 15 px (0.15 x 100) each side
 
 
-def test_none_vector_stays_none():
-    assert to_pgvector(None) is None
-    assert from_pgvector(None) is None
+# ------------------------------------------------------------- match rules
+LOST = datetime(2026, 10, 14, 9, 0, tzinfo=timezone.utc)
+
+
+def _found(class_name="bag", color="black", hours_after=1.0, **extra):
+    return {
+        "class_name": class_name,
+        "dominant_color": color,
+        "found_at": LOST + timedelta(hours=hours_after),
+        **extra,
+    }
+
+
+def test_type_colour_and_timing_all_count():
+    best = score_candidate(_found(), "bag", "black", LOST)
+    wrong_colour = score_candidate(_found(color="red"), "bag", "black", LOST)
+    wrong_type = score_candidate(_found(class_name="umbrella"), "bag", "black", LOST)
+    late = score_candidate(_found(hours_after=60), "bag", "black", LOST)
+
+    assert best["same_class"] and best["same_color"]
+    assert best["score"] > late["score"] > wrong_colour["score"] > wrong_type["score"]
+    # 0.5 type + 0.3 colour + 0.2 x (1 - 1h / 72h)
+    assert best["score"] == pytest.approx(0.5 + 0.3 + 0.2 * (1 - 1 / 72), abs=1e-4)
+
+
+def test_a_relabelled_object_still_scores_on_colour_and_time():
+    # The detector called the wallet a phone: colour and timing still surface it.
+    match = score_candidate(_found(class_name="mobile_phone"), "wallet", "black", LOST)
+    assert not match["same_class"] and match["same_color"]
+    assert match["score"] >= 0.3
+
+
+def test_no_loss_time_gives_neutral_time_credit():
+    match = score_candidate(_found(), "bag", None, None)
+    assert match["score"] == pytest.approx(0.5 + 0.2 * 0.5)
+
+
+def _sighting(found_id, camera, box, hours, score=0.8):
+    x1, y1, x2, y2 = box
+    return {
+        "found_id": found_id,
+        "camera_id": camera,
+        "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+        "found_at": LOST + timedelta(hours=hours),
+        "score": score,
+    }
+
+
+def test_repeat_detections_in_the_same_spot_fold_into_one():
+    kept = collapse_repeat_sightings(
+        [
+            _sighting("a", "cam1", (100, 100, 200, 200), hours=1),
+            _sighting("b", "cam1", (104, 102, 204, 198), hours=5),   # same spot
+            _sighting("c", "cam1", (400, 100, 500, 200), hours=2),   # elsewhere
+        ],
+        min_iou=0.6,
+    )
+    assert [k["found_id"] for k in kept] == ["a", "c"]
+    assert kept[0]["sightings"] == 2
+    assert kept[0]["last_seen_at"] == LOST + timedelta(hours=5)
+    assert "bbox" not in kept[0]
+
+
+def test_same_spot_on_different_cameras_stays_separate():
+    kept = collapse_repeat_sightings(
+        [
+            _sighting("a", "cam1", (100, 100, 200, 200), hours=1),
+            _sighting("b", "cam2", (100, 100, 200, 200), hours=1),
+        ],
+        min_iou=0.6,
+    )
+    assert [k["found_id"] for k in kept] == ["a", "b"]
+
+
+# --------------------------------------------------------------- photo likeness
+def _bag(color, size=(120, 90), stripe=None):
+    """A synthetic bag: a filled rounded body on a light floor, optionally striped."""
+    image = np.full((size[0], size[1], 3), 210, np.uint8)
+    image[20:110, 10:80] = color
+    if stripe is not None:
+        image[55:65, 10:80] = stripe
+    return image
+
+
+def test_perceptual_hash_ignores_scale_and_brightness():
+    bag = _bag((60, 30, 120), stripe=(240, 240, 240))
+    smaller = cv2.resize(bag, (45, 60))
+    darker = (bag * 0.7).astype(np.uint8)
+    h = visual_similarity.perceptual_hash(bag)
+    assert visual_similarity.hash_similarity(h, visual_similarity.perceptual_hash(smaller)) > 0.8
+    assert visual_similarity.hash_similarity(h, visual_similarity.perceptual_hash(darker)) > 0.8
+    assert visual_similarity.hash_similarity(h, h) == 1.0
+
+
+def test_colour_histogram_tells_a_purple_bag_from_a_black_one():
+    purple = visual_similarity.color_histogram(_bag((160, 40, 120)))
+    lighter_purple = visual_similarity.color_histogram(_bag((185, 60, 140)))
+    black = visual_similarity.color_histogram(_bag((20, 20, 20)))
+    assert visual_similarity.histogram_similarity(purple, lighter_purple) > visual_similarity.histogram_similarity(
+        purple, black
+    )
+
+
+def test_features_round_trip_through_bytes():
+    features = visual_similarity.extract(_bag((160, 40, 120)))
+    restored = visual_similarity.histogram_from_bytes(features.histogram_bytes)
+    assert np.allclose(restored, features.histogram)
+    assert -(2**63) <= features.phash < 2**63  # fits a Postgres BIGINT
+
+
+def test_photo_likeness_ranks_the_same_bag_first():
+    photo = visual_similarity.extract(_bag((160, 40, 120), stripe=(240, 240, 240)))
+    same = visual_similarity.extract(cv2.resize(_bag((150, 35, 115), stripe=(230, 230, 230)), (60, 80)))
+    other = visual_similarity.extract(_bag((30, 120, 30)))
+
+    def likeness(item):
+        return visual_similarity.similarity(photo.phash, photo.histogram, item.phash, item.histogram, 0.3)
+
+    assert likeness(same) > likeness(other)
+
+
+def test_score_without_photo_is_unchanged_and_with_one_is_a_weighted_mean():
+    without = score_candidate(_found(), "bag", "black", LOST)
+    with_photo = score_candidate(_found(), "bag", "black", LOST, visual=1.0)
+    weak_photo = score_candidate(_found(), "bag", "black", LOST, visual=0.0)
+
+    assert without["visual_similarity"] is None
+    assert without["score"] == pytest.approx(0.5 + 0.3 + 0.2 * (1 - 1 / 72), abs=1e-4)
+    assert with_photo["score"] == pytest.approx((0.5 + 0.3 + 0.2 * (1 - 1 / 72) + 0.3) / 1.3, abs=1e-4)
+    assert weak_photo["score"] < without["score"] < with_photo["score"]
+
+
+def test_item_without_a_crop_counts_as_neutral_when_the_report_has_a_photo():
+    unseen = score_candidate(_found(), "bag", "black", LOST, visual=None, has_photo=True)
+    alike = score_candidate(_found(), "bag", "black", LOST, visual=0.8, has_photo=True)
+    assert unseen["visual_similarity"] is None
+    assert unseen["score"] == pytest.approx((0.5 + 0.3 + 0.2 * (1 - 1 / 72) + 0.3 * 0.5) / 1.3, abs=1e-4)
+    assert alike["score"] > unseen["score"]

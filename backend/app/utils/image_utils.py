@@ -63,13 +63,22 @@ def bytes_to_base64(data: Optional[bytes]) -> Optional[str]:
     return base64.b64encode(bytes(data)).decode("utf-8")
 
 
-def crop_box(frame: np.ndarray, box: Box, padding: int = 8) -> Optional[np.ndarray]:
-    """Crop a padded region of the frame; returns None when the crop is empty."""
+def crop_box(
+    frame: np.ndarray, box: Box, padding: int = 8, context_ratio: float = 0.0
+) -> Optional[np.ndarray]:
+    """Crop a padded region of the frame; returns None when the crop is empty.
+
+    ``context_ratio`` widens the pad to a fraction of the box's longer side:
+    a tight 80 px crop gives an embedder little to work with, a little
+    surrounding context gives it shape and scale.
+    """
     if frame is None or frame.size == 0:
         return None
 
     height, width = frame.shape[:2]
     x1, y1, x2, y2 = box
+    if context_ratio > 0:
+        padding = max(padding, int(round(max(x2 - x1, y2 - y1) * context_ratio)))
     padded = (x1 - padding, y1 - padding, x2 + padding, y2 + padding)
     x1, y1, x2, y2 = clamp_box(padded, width, height)
 
@@ -137,3 +146,86 @@ def annotate_abandoned(
         thickness=3,
     )
     return annotated
+
+
+_COLOR_UNATTENDED = (0, 215, 255)  # yellow - owner gone, clock running
+_COLOR_HEADER = (32, 32, 32)
+
+# Tracked-object status (abandonment_service.ObjectStatus values) -> box colour
+_STATUS_COLORS = {
+    "MOVING": _COLOR_OBJECT,
+    "ATTENDED": _COLOR_PERSON,
+    "UNATTENDED": _COLOR_UNATTENDED,
+    "ABANDONED": _COLOR_ABANDONED,
+}
+
+
+def _track_label(track: dict) -> str:
+    status = track.get("status", "")
+    label = f"#{track.get('track_id')} {track.get('class_name', '')} {status}"
+    if status in ("UNATTENDED", "ABANDONED") and track.get("unattended_seconds"):
+        label += f" {track['unattended_seconds']:.0f}s"
+    return label
+
+
+def annotate_tracks(
+    frame: np.ndarray,
+    persons: Sequence[Box],
+    tracks: Sequence[dict],
+    roi: Optional[Sequence[Sequence[float]]] = None,
+    header: str = "",
+) -> np.ndarray:
+    """The live view: every tracked object coloured by its abandonment status.
+
+    ``tracks`` is ``AbandonmentTracker.snapshot()``; ``persons`` are the boxes
+    of the people detected in this frame. Draws on a copy.
+    """
+    annotated = frame.copy()
+    if roi:
+        draw_roi(annotated, roi)
+
+    for box in persons:
+        draw_box(annotated, box, color=_COLOR_PERSON, thickness=1)
+
+    for track in tracks:
+        status = track.get("status", "")
+        draw_box(
+            annotated,
+            track["box"],
+            _track_label(track),
+            _STATUS_COLORS.get(status, _COLOR_OBJECT),
+            thickness=3 if status == "ABANDONED" else 2,
+        )
+
+    if header:
+        (_, th), baseline = cv2.getTextSize(header, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
+        bar = th + baseline + 10
+        cv2.rectangle(annotated, (0, 0), (annotated.shape[1], bar), _COLOR_HEADER, -1)
+        cv2.putText(
+            annotated,
+            header,
+            (8, th + 5),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+    return annotated
+
+
+def placeholder_frame(message: str, width: int = 960, height: int = 540) -> np.ndarray:
+    """A dark frame with a message, for live viewers before the first frame."""
+    frame = np.full((height, width, 3), 24, dtype=np.uint8)
+    (tw, th), _ = cv2.getTextSize(message, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+    cv2.putText(
+        frame,
+        message,
+        ((width - tw) // 2, (height + th) // 2),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (200, 200, 200),
+        2,
+        cv2.LINE_AA,
+    )
+    return frame

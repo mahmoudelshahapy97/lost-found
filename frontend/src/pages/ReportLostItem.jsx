@@ -133,7 +133,7 @@ export default function ReportLostItem() {
 
       <PageHeader
         title="Report a lost item"
-        subtitle="A photo is embedded with CLIP into the same 512-dimension space as the crops harvested from the cameras, which is what lets the two be compared."
+        subtitle="Candidates are matched on object type, colour and when the item was lost. The photo gives the colour and lets staff compare by eye; a colour word in the description works too."
       />
 
       <Box component="form" onSubmit={submit} noValidate>
@@ -205,7 +205,7 @@ export default function ReportLostItem() {
                     fullWidth
                     multiline
                     minRows={2}
-                    placeholder="Black leather backpack with a laptop sleeve and a red keyring"
+                    placeholder="Black leather bag with a front zip pocket and a red keyring"
                     helperText="Colour, material and distinguishing marks. Searched as text against the gallery even with no photo."
                   />
                   <TextField

@@ -21,6 +21,7 @@ import { useTheme } from "@mui/material/styles";
 import DashboardIcon from "@mui/icons-material/SpaceDashboard";
 import VideocamIcon from "@mui/icons-material/Videocam";
 import NotificationsIcon from "@mui/icons-material/NotificationsActive";
+import InsightsIcon from "@mui/icons-material/Insights";
 import ReportProblemIcon from "@mui/icons-material/ReportProblem";
 import Inventory2Icon from "@mui/icons-material/Inventory2";
 import ImageSearchIcon from "@mui/icons-material/ImageSearch";
@@ -54,6 +55,7 @@ const NAV_SECTIONS = [
       { to: "/", label: "Dashboard", icon: <DashboardIcon />, end: true, minimum: "viewer" },
       { to: "/cameras", label: "Cameras", icon: <VideocamIcon />, minimum: "viewer" },
       { to: "/events", label: "Alerts", icon: <NotificationsIcon />, minimum: "viewer" },
+      { to: "/analytics", label: "Analytics", icon: <InsightsIcon />, minimum: "viewer" },
     ],
   },
   {
@@ -280,6 +282,10 @@ export function AppLayout({ mode, onToggleMode }) {
         component="main"
         sx={{
           flexGrow: 1,
+          // A flex child otherwise grows to its widest descendant, so one wide
+          // table pushes the whole page sideways on a phone instead of
+          // scrolling inside its own container.
+          minWidth: 0,
           width: { md: `calc(100% - ${DRAWER_WIDTH}px)` },
           px: { xs: 2, md: 3 },
           pb: 4,

@@ -16,12 +16,8 @@
 BEGIN;
 
 -- ---------------------------------------------------------------------------
--- Extensions. Both must exist before any table that depends on their types.
+-- Extensions.
 -- ---------------------------------------------------------------------------
-
--- pgvector supplies the VECTOR type and the <=> cosine-distance operator that
--- lost <-> found matching is built on.
-CREATE EXTENSION IF NOT EXISTS vector;
 
 -- gen_random_uuid() lives in pgcrypto on older servers; on PG13+ it is built
 -- in. Creating it anyway keeps this file portable across both.
@@ -75,6 +71,7 @@ CREATE TABLE IF NOT EXISTS abandoned_event (
     static_since    TIMESTAMPTZ,
     abandoned_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     frame_jpeg      BYTEA,                   -- annotated full frame
+    clip_path       TEXT,                    -- evidence mp4 under CLIP_DIR, NULL until encoded
     status          TEXT NOT NULL DEFAULT 'OPEN'
                     CHECK (status IN ('OPEN', 'ACKNOWLEDGED', 'RESOLVED', 'FALSE_POSITIVE')),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -105,7 +102,10 @@ CREATE TABLE IF NOT EXISTS found_item (
     class_name      TEXT NOT NULL,
     dominant_color  TEXT,
     crop_jpeg       BYTEA,
-    embedding       VECTOR(512),             -- CLIP image embedding of the crop
+    -- Visual features of the item for photo matching (utils/visual_similarity):
+    -- 64-bit perceptual hash and HSV histogram as float32 bytes.
+    phash           BIGINT,
+    color_hist      BYTEA,
     found_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     status          TEXT NOT NULL DEFAULT 'UNCLAIMED'
                     CHECK (status IN ('UNCLAIMED', 'CLAIMED', 'DISCARDED')),
@@ -114,17 +114,15 @@ CREATE TABLE IF NOT EXISTS found_item (
 
 CREATE INDEX IF NOT EXISTS idx_found_status     ON found_item (status);
 CREATE INDEX IF NOT EXISTS idx_found_class_time ON found_item (class_name, found_at DESC);
-
--- HNSW over cosine distance. This is what keeps candidate lookup off a
--- sequential scan of the whole gallery.
-CREATE INDEX IF NOT EXISTS idx_found_embedding
-    ON found_item USING hnsw (embedding vector_cosine_ops);
+-- The search page's main query: one camera's items over a time range.
+CREATE INDEX IF NOT EXISTS idx_found_camera_time ON found_item (camera_id, found_at DESC);
 
 -- ---------------------------------------------------------------------------
 -- lost_item — what a person reported missing
 --
--- A report may carry a photo, a description, or both, which is why the two
--- embedding columns are independently nullable.
+-- A report may carry a photo, a description, or both. Matching uses its object
+-- type, its colour (read from the photo, or a colour word in the description)
+-- and lost_after; the photo itself is kept for staff to look at.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS lost_item (
     lost_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -134,8 +132,8 @@ CREATE TABLE IF NOT EXISTS lost_item (
     class_name      TEXT,
     dominant_color  TEXT,
     photo_jpeg      BYTEA,
-    embedding       VECTOR(512),        -- CLIP image embedding of the photo
-    text_embedding  VECTOR(512),        -- CLIP text embedding of the description
+    phash           BIGINT,             -- features of the photo, as on found_item
+    color_hist      BYTEA,
     lost_after      TIMESTAMPTZ,        -- narrows the found-item search window
     reported_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     status          TEXT NOT NULL DEFAULT 'OPEN'
@@ -145,13 +143,11 @@ CREATE TABLE IF NOT EXISTS lost_item (
 
 CREATE INDEX IF NOT EXISTS idx_lost_status   ON lost_item (status);
 CREATE INDEX IF NOT EXISTS idx_lost_reported ON lost_item (reported_at DESC);
-CREATE INDEX IF NOT EXISTS idx_lost_embedding
-    ON lost_item USING hnsw (embedding vector_cosine_ops);
 
 -- ---------------------------------------------------------------------------
 -- match_result — one pairing between a lost report and a found item
 --
--- Holds both machine suggestions (confirmed = FALSE, method = 'clip_cosine')
+-- Holds both rule-based suggestions (confirmed = FALSE, method = 'rule_based')
 -- and operator decisions (confirmed = TRUE). Keeping suggestions rather than
 -- discarding them is what lets an operator revisit a shortlist later.
 -- ---------------------------------------------------------------------------
@@ -160,7 +156,7 @@ CREATE TABLE IF NOT EXISTS match_result (
     lost_id     UUID NOT NULL REFERENCES lost_item (lost_id) ON DELETE CASCADE,
     found_id    UUID NOT NULL REFERENCES found_item (found_id) ON DELETE CASCADE,
     score       REAL NOT NULL,
-    method      TEXT NOT NULL DEFAULT 'clip_cosine',
+    method      TEXT NOT NULL DEFAULT 'rule_based',
     confirmed   BOOLEAN NOT NULL DEFAULT FALSE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
@@ -244,13 +240,9 @@ COMMIT;
 -- ---------------------------------------------------------------------------
 -- Notes
 --
--- VECTOR(512) is the width of CLIP ViT-B-32, set by CLIP_MODEL_NAME in
--- backend/.env. Changing the model changes this dimension, and the two columns
--- plus their HNSW indexes have to change with it.
---
--- The HNSW indexes are only used by a query that orders by the raw <=>
--- distance. Ordering by `1 - (a <=> b)` reads as the same ranking but silently
--- falls back to a sequential scan — see database/queries.sql.
+-- No embeddings are stored. Earlier versions kept CLIP/DINOv2 vectors in
+-- found_item and lost_item; the api drops those columns from an existing
+-- database at startup (SCHEMA_UPGRADES in app/core/database.py).
 --
 -- frame_jpeg and crop_jpeg are BYTEA, so the images live in the row. That keeps
 -- deployment to one service at the cost of table size; queries.sql carries both

@@ -1,4 +1,4 @@
-"""Integration tests against a live Postgres with pgvector.
+"""Integration tests against a live Postgres.
 
 Skipped automatically when no database is reachable, so ``pytest`` stays green
 without one. To run them, point the usual DB_* variables at a server that has
@@ -6,24 +6,31 @@ without one. To run them, point the usual DB_* variables at a server that has
 
     DB_HOST=localhost DB_PORT=5433 pytest tests/test_integration.py
 
-No YOLO or CLIP weights are needed: embeddings are crafted by hand so the
-pgvector search path can be exercised on its own.
+No model weights are needed: found items and events are written directly, so
+the search filters and the match rules can be exercised on their own.
 """
 
-import math
+import json
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import List
 
 import numpy as np
 import pytest
 
 from app.core.config import config
-from app.core.database import close_db_pool, db_manager, init_db_pool, wait_for_schema
+from app.core.database import (
+    close_db_pool,
+    db_manager,
+    ensure_schema_upgrades,
+    init_db_pool,
+    wait_for_schema,
+)
 from app.services.abandonment_service import AbandonmentEvent
+from app.services.analytics_service import analytics_service
 from app.services.camera_service import camera_service
 from app.services.event_service import event_service
 from app.services.matching_service import matching_service
-from app.utils.vector_utils import to_pgvector
 
 pytestmark = pytest.mark.asyncio
 
@@ -40,6 +47,8 @@ async def database():
         await close_db_pool()
         pytest.skip("Database reachable but database/init/002_schema.sql has not been applied.")
 
+    # The same idempotent upgrades the api runs at startup.
+    await ensure_schema_upgrades()
     yield
     await close_db_pool()
 
@@ -70,23 +79,6 @@ async def camera(database):
     )
     yield created
     await camera_service.delete_camera(created["camera_id"])
-
-
-def unit_vector(index: int, dim: int = None) -> List[float]:
-    """A one-hot vector: orthogonal to every other one, so cosine scores are obvious."""
-    dim = dim or config.embedding_dim
-    vector = [0.0] * dim
-    vector[index] = 1.0
-    return vector
-
-
-def blended(a: int, b: int, weight: float) -> List[float]:
-    """Normalised mix of two one-hot vectors, leaning towards ``a``."""
-    vector = [0.0] * config.embedding_dim
-    vector[a] = weight
-    vector[b] = 1.0 - weight
-    norm = math.sqrt(sum(v * v for v in vector))
-    return [v / norm for v in vector]
 
 
 # ------------------------------------------------------------------- cameras
@@ -125,7 +117,7 @@ async def test_record_event_creates_event_and_found_item(camera):
     frame = np.full((480, 640, 3), 200, dtype=np.uint8)
     event = AbandonmentEvent(
         track_id=42,
-        class_name="backpack",
+        class_name="bag",
         confidence=0.91,
         box=(100.0, 100.0, 200.0, 220.0),
         first_seen_at=1_700_000_000.0,
@@ -138,7 +130,7 @@ async def test_record_event_creates_event_and_found_item(camera):
     stored = await event_service.record_event(camera["camera_id"], event, frame)
 
     assert stored is not None
-    assert stored["class_name"] == "backpack"
+    assert stored["class_name"] == "bag"
     assert stored["owner_track_id"] == 3
 
     # The annotated alert frame is retrievable as JPEG bytes.
@@ -148,7 +140,7 @@ async def test_record_event_creates_event_and_found_item(camera):
     # The event auto-populated the found gallery.
     gallery = await matching_service.list_found_items(camera_id=camera["camera_id"])
     assert gallery["total"] == 1
-    assert gallery["found_items"][0]["class_name"] == "backpack"
+    assert gallery["found_items"][0]["class_name"] == "bag"
 
     listed = await event_service.list_events(camera_id=camera["camera_id"])
     assert listed["total"] == 1
@@ -159,7 +151,7 @@ async def test_record_event_is_idempotent(camera):
     """A replayed event for the same track must not duplicate the row."""
     event = AbandonmentEvent(
         track_id=99,
-        class_name="suitcase",
+        class_name="umbrella",
         confidence=0.8,
         box=(10.0, 10.0, 60.0, 60.0),
         first_seen_at=1_700_000_000.0,
@@ -183,7 +175,7 @@ async def test_record_event_is_idempotent(camera):
 async def test_event_status_transitions(camera):
     event = AbandonmentEvent(
         track_id=7,
-        class_name="handbag",
+        class_name="wallet",
         confidence=0.7,
         box=(0.0, 0.0, 50.0, 50.0),
         first_seen_at=1_700_000_000.0,
@@ -202,40 +194,102 @@ async def test_event_status_transitions(camera):
     assert stats["open"] == 0
 
 
-# ------------------------------------------------------------------ matching
-async def test_pgvector_ranks_the_closer_embedding_first(camera):
-    """The whole retrieval path: text-cast vectors in, cosine ranking out."""
-    close_id = await _insert_found_item(camera["camera_id"], "backpack", unit_vector(0), "blue")
-    far_id = await _insert_found_item(camera["camera_id"], "backpack", unit_vector(1), "red")
+# -------------------------------------------------------------------- search
+async def test_found_items_filter_by_camera_time_type_and_colour(camera):
+    now = datetime.now(timezone.utc)
+    cam = camera["camera_id"]
+    early = await _insert_found_item(cam, "bag", "black", found_at=now - timedelta(hours=5))
+    late = await _insert_found_item(cam, "bag", "black", found_at=now - timedelta(hours=1))
+    red = await _insert_found_item(cam, "umbrella", "red", found_at=now - timedelta(hours=1))
 
-    lost_id = await _insert_lost_item(blended(0, 1, 0.95), class_name="backpack", color="blue")
+    def ids(result):
+        return [row["found_id"] for row in result["found_items"]]
+
+    everything = await matching_service.list_found_items(camera_id=cam, per_page=100)
+    assert ids(everything) == [late, red, early] or ids(everything) == [red, late, early]
+
+    window = await matching_service.list_found_items(
+        camera_id=cam, start=now - timedelta(hours=2), end=now, per_page=100
+    )
+    assert set(ids(window)) == {late, red}
+
+    bags = await matching_service.list_found_items(camera_id=cam, class_name="bag")
+    assert set(ids(bags)) == {early, late}
+
+    reds = await matching_service.list_found_items(camera_id=cam, color="red")
+    assert ids(reds) == [red] and reds["total"] == 1
+
+
+# ------------------------------------------------------------------ matching
+async def test_rules_rank_same_type_and_colour_first(camera):
+    lost_at = datetime.now(timezone.utc) - timedelta(hours=6)
+    cam = camera["camera_id"]
+    right = await _insert_found_item(
+        cam, "bag", "black", found_at=lost_at + timedelta(hours=1), box=(10, 10, 60, 60)
+    )
+    wrong_colour = await _insert_found_item(
+        cam, "bag", "red", found_at=lost_at + timedelta(hours=1), box=(300, 10, 350, 60)
+    )
+    lost_id = await _insert_lost_item("bag", "black", lost_after=lost_at)
 
     matches = await matching_service.find_matches_for_lost_item(
-        lost_id, top_k=50, min_similarity=0.0
+        lost_id, top_k=50, min_score=0.0, persist=False
     )
-    ranked = [m["found_id"] for m in matches]
     by_id = {m["found_id"]: m for m in matches}
 
-    assert ranked.index(close_id) < ranked.index(far_id)
-    assert by_id[close_id]["score"] > by_id[far_id]["score"]
-    # cos(query, e0) = 0.95 / sqrt(0.95^2 + 0.05^2) = 0.9986
-    assert by_id[close_id]["image_similarity"] == pytest.approx(0.9986, abs=1e-3)
-    assert by_id[close_id]["same_class"] and by_id[close_id]["same_color"]
+    assert by_id[right]["score"] > by_id[wrong_colour]["score"]
+    assert by_id[right]["same_class"] and by_id[right]["same_color"]
 
 
-async def test_min_similarity_filters_weak_matches(camera):
-    await _insert_found_item(camera["camera_id"], "suitcase", unit_vector(5))
-    lost_id = await _insert_lost_item(unit_vector(300))  # orthogonal -> similarity 0
+async def test_items_found_before_the_loss_are_excluded(camera):
+    lost_at = datetime.now(timezone.utc) - timedelta(hours=3)
+    before = await _insert_found_item(
+        camera["camera_id"], "wallet", "brown", found_at=lost_at - timedelta(hours=1)
+    )
+    lost_id = await _insert_lost_item("wallet", "brown", lost_after=lost_at)
 
-    assert await matching_service.find_matches_for_lost_item(lost_id, min_similarity=0.5) == []
-    assert await matching_service.find_matches_for_lost_item(lost_id, min_similarity=0.0) != []
+    matches = await matching_service.find_matches_for_lost_item(
+        lost_id, top_k=50, min_score=0.0, persist=False
+    )
+    assert before not in [m["found_id"] for m in matches]
+
+
+async def test_repeat_detections_collapse_into_one_suggestion(camera):
+    lost_at = datetime.now(timezone.utc) - timedelta(hours=4)
+    cam = camera["camera_id"]
+    first = await _insert_found_item(
+        cam, "umbrella", "blue", found_at=lost_at + timedelta(hours=1), box=(100, 100, 200, 200)
+    )
+    again = await _insert_found_item(
+        cam, "umbrella", "blue", found_at=lost_at + timedelta(hours=2), box=(102, 101, 201, 203)
+    )
+    lost_id = await _insert_lost_item("umbrella", "blue", lost_after=lost_at)
+
+    matches = await matching_service.find_matches_for_lost_item(
+        lost_id, top_k=50, min_score=0.0, persist=False
+    )
+    ours = [m for m in matches if m["found_id"] in (first, again)]
+    assert len(ours) == 1 and ours[0]["sightings"] == 2
+    assert "bbox" not in ours[0]
+
+
+async def test_description_colour_is_used_when_there_is_no_photo(camera):
+    lost_id = (
+        await matching_service.create_lost_item(
+            description="small navy umbrella", class_name="umbrella"
+        )
+    )["lost_id"]
+    _CREATED.append(("lost_item", "lost_id", lost_id))
+
+    report = await matching_service.get_lost_item(lost_id)
+    assert report["dominant_color"] == "blue"  # "navy" read from the description
 
 
 async def test_confirm_match_resolves_both_sides(camera):
     frame = np.full((200, 200, 3), 128, dtype=np.uint8)
     event = AbandonmentEvent(
         track_id=1234,
-        class_name="backpack",
+        class_name="bag",
         confidence=0.95,
         box=(20.0, 20.0, 120.0, 120.0),
         first_seen_at=1_700_000_000.0,
@@ -248,7 +302,7 @@ async def test_confirm_match_resolves_both_sides(camera):
     found = await db_manager.execute_query(
         "SELECT found_id FROM found_item WHERE event_id = $1", (stored["event_id"],), fetch_one=True
     )
-    lost_id = await _insert_lost_item(unit_vector(0))
+    lost_id = await _insert_lost_item("bag", None)
 
     await matching_service.confirm_match(lost_id, found["found_id"], 0.93)
 
@@ -265,34 +319,114 @@ async def test_confirm_match_resolves_both_sides(camera):
 
     # A claimed item drops out of the searchable gallery.
     remaining = await matching_service.find_matches_for_lost_item(
-        lost_id, top_k=50, min_similarity=0.0
+        lost_id, top_k=50, min_score=0.0
     )
     assert found["found_id"] not in [m["found_id"] for m in remaining]
 
 
+# ----------------------------------------------------------------- analytics
+async def test_analytics_summary_windows_and_buckets(camera):
+    cam = camera["camera_id"]
+    now = datetime.now(timezone.utc)
+    await _insert_event(cam, "bag", now - timedelta(hours=1))
+    await _insert_event(cam, "bag", now - timedelta(days=2))
+    await _insert_event(cam, "wallet", now - timedelta(days=3), status="FALSE_POSITIVE")
+    await _insert_event(cam, "bag", now - timedelta(days=10))  # outside a 7-day window
+
+    week = await analytics_service.summary(days=7, camera_id=cam, tz="UTC")
+
+    # Zero-filled: one point per day whether or not anything happened.
+    assert week["window"]["bucket"] == "day"
+    assert len(week["series"]) == 7
+    assert sum(point["events"] for point in week["series"]) == 3
+
+    assert week["kpis"]["events"] == 3
+    assert week["kpis"]["false_positives"] == 1
+    assert week["kpis"]["false_positive_pct"] == 33.3
+    assert week["kpis"]["avg_unattended_s"] == 30.0
+    assert sum(cell["events"] for cell in week["heatmap"]) == 3
+
+    assert [row["camera_id"] for row in week["by_camera"]] == [cam]
+    assert {row["class_name"]: row["events"] for row in week["by_class"]} == {"bag": 2, "wallet": 1}
+
+    day = await analytics_service.summary(days=1, camera_id=cam, tz="Africa/Cairo")
+    assert day["window"]["bucket"] == "hour"
+    assert len(day["series"]) == 24
+    assert day["kpis"]["events"] == 1
+
+    with pytest.raises(ValueError):
+        await analytics_service.summary(days=7, tz="Not/AZone")
+
+
 # ------------------------------------------------------------------- helpers
-async def _insert_found_item(camera_id, class_name: str, embedding, color: str = None):
+async def _insert_event(camera_id, class_name: str, abandoned_at: datetime, status: str = "OPEN"):
+    """An event abandoned after 30 s unattended; the camera fixture's cascade removes it."""
+    await db_manager.execute_query(
+        """
+        INSERT INTO abandoned_event (
+            camera_id, track_key, class_name, confidence, bbox, first_seen_at,
+            static_since, abandoned_at, status
+        )
+        VALUES ($1, $2, $3, 0.8, '{"x1": 0, "y1": 0, "x2": 50, "y2": 50}'::jsonb, $4, $4, $5, $6)
+        """,
+        (
+            camera_id,
+            f"test-{uuid.uuid4().hex[:8]}",
+            class_name,
+            abandoned_at - timedelta(seconds=30),
+            abandoned_at,
+            status,
+        ),
+    )
+
+
+async def _insert_found_item(
+    camera_id, class_name: str, color: str = None, found_at: datetime = None, box=None
+):
+    """A found item, with a backing event when a box is given (for repeat collapsing)."""
+    event_id = None
+    if box is not None:
+        x1, y1, x2, y2 = box
+        when = found_at or datetime.now(timezone.utc)
+        event = await db_manager.execute_query(
+            """
+            INSERT INTO abandoned_event (
+                camera_id, track_key, class_name, bbox, first_seen_at, abandoned_at
+            )
+            VALUES ($1, $2, $3, $4::jsonb, $5, $5)
+            RETURNING event_id
+            """,
+            (
+                camera_id,
+                f"test-{uuid.uuid4().hex[:8]}",
+                class_name,
+                json.dumps({"x1": x1, "y1": y1, "x2": x2, "y2": y2}),
+                when,
+            ),
+            fetch_one=True,
+        )
+        event_id = event["event_id"]
     row = await db_manager.execute_query(
         """
-        INSERT INTO found_item (camera_id, class_name, dominant_color, embedding)
-        VALUES ($1, $2, $3, $4::text::vector)
+        INSERT INTO found_item (event_id, camera_id, class_name, dominant_color, found_at)
+        VALUES ($1, $2, $3, $4, COALESCE($5, NOW()))
         RETURNING found_id
         """,
-        (camera_id, class_name, color, to_pgvector(embedding)),
+        (event_id, camera_id, class_name, color, found_at),
         fetch_one=True,
     )
     _CREATED.append(("found_item", "found_id", row["found_id"]))
     return row["found_id"]
 
 
-async def _insert_lost_item(embedding, class_name: str = None, color: str = None):
+async def _insert_lost_item(class_name: str = None, color: str = None, lost_after=None):
     row = await db_manager.execute_query(
         """
-        INSERT INTO lost_item (description, class_name, dominant_color, embedding)
-        VALUES ('test report', $1, $2, $3::text::vector)
+        INSERT INTO lost_item (description, class_name, dominant_color, lost_after)
+        VALUES ('test report', $1, $2, $3)
         RETURNING lost_id
         """,
-        (class_name, color, to_pgvector(embedding)),
+        (class_name, color, lost_after),
         fetch_one=True,
     )
     _CREATED.append(("lost_item", "lost_id", row["lost_id"]))

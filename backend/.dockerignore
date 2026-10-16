@@ -14,3 +14,4 @@ models/
 videos/
 *.mp4
 .ultralytics/
+data/

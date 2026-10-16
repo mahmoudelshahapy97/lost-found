@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link as RouterLink, useNavigate, useParams } from "react-router-dom";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -70,6 +70,17 @@ export default function CameraDetail() {
   const worker = status.data?.data;
   const running = Boolean(worker?.running);
   const tracked = worker?.tracked_objects || [];
+
+  // The live stream ends when the worker stops or the supervisor replaces it.
+  // Fall back to the snapshot then, and reconnect whenever a new worker starts.
+  const [streamFailed, setStreamFailed] = useState(false);
+  const [streamKey, setStreamKey] = useState(() => Date.now());
+  const workerStartedAt = worker?.started_at;
+  useEffect(() => {
+    setStreamFailed(false);
+    setStreamKey(Date.now());
+  }, [running, workerStartedAt]);
+  const live = running && !streamFailed;
 
   // jsonb arrives as a string; parse once here rather than at every read.
   const roi = parseJsonField(camera.data?.roi);
@@ -178,29 +189,55 @@ export default function CameraDetail() {
             >
               <Box>
                 <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                  Live snapshot
+                  {live ? "Live view" : "Snapshot"}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  The worker's latest frame, or a one-shot grab when it is stopped.
+                  {live
+                    ? "Detection output as it happens: boxes are coloured by abandonment status."
+                    : "The worker's latest frame, or a one-shot grab when it is stopped."}
                 </Typography>
               </Box>
-              <Button
-                size="small"
-                startIcon={<RefreshIcon />}
-                onClick={() => setSnapshotKey(Date.now())}
-              >
-                Refresh frame
-              </Button>
+              {live ? (
+                <Chip size="small" color="error" label="LIVE" />
+              ) : (
+                <Button
+                  size="small"
+                  startIcon={<RefreshIcon />}
+                  onClick={() => {
+                    setSnapshotKey(Date.now());
+                    if (running) setStreamFailed(false);
+                  }}
+                >
+                  Refresh frame
+                </Button>
+              )}
             </Stack>
             <Divider />
-            <ItemImage
-              key={snapshotKey}
-              src={cameraApi.snapshotUrl(cameraId, snapshotKey)}
-              alt={`Snapshot from ${camera.data.name}`}
-              height={380}
-              fit="contain"
-              fallbackLabel="No frame — the RTSP source is not answering"
-            />
+            {live ? (
+              <Box
+                component="img"
+                key={streamKey}
+                src={cameraApi.streamUrl(cameraId, streamKey)}
+                alt={`Live view from ${camera.data.name}`}
+                onError={() => setStreamFailed(true)}
+                sx={{
+                  height: 380,
+                  width: "100%",
+                  objectFit: "contain",
+                  display: "block",
+                  bgcolor: "common.black",
+                }}
+              />
+            ) : (
+              <ItemImage
+                key={snapshotKey}
+                src={cameraApi.snapshotUrl(cameraId, snapshotKey)}
+                alt={`Snapshot from ${camera.data.name}`}
+                height={380}
+                fit="contain"
+                fallbackLabel="No frame — the RTSP source is not answering"
+              />
+            )}
           </Card>
         </Grid>
 
@@ -256,9 +293,36 @@ export default function CameraDetail() {
                   <DetailRow label="Connection">
                     <Chip
                       size="small"
-                      color={worker.connected ? "success" : "warning"}
-                      label={worker.connected ? "Streaming" : "Reconnecting"}
+                      color={
+                        worker.state === "error"
+                          ? "error"
+                          : worker.connected
+                            ? "success"
+                            : "warning"
+                      }
+                      label={
+                        worker.state === "error"
+                          ? "Error — supervisor will restart it"
+                          : worker.connected
+                            ? "Streaming"
+                            : titleCase(worker.state || "reconnecting")
+                      }
                     />
+                  </DetailRow>
+                  <DetailRow label="Last frame">
+                    <Typography variant="body2" color="text.secondary">
+                      {worker.last_frame_at
+                        ? `${formatDuration(worker.seconds_since_frame)} ago · ${worker.fps ?? 0} fps`
+                        : "None yet"}
+                    </Typography>
+                  </DetailRow>
+                  <DetailRow label="Reconnects">
+                    <Typography variant="body2">
+                      {worker.reconnects ?? 0}
+                      {worker.supervisor_restarts
+                        ? ` · ${worker.supervisor_restarts} supervisor restart(s)`
+                        : ""}
+                    </Typography>
                   </DetailRow>
                   <DetailRow label="Started">
                     <Typography variant="body2" color="text.secondary">
@@ -269,7 +333,9 @@ export default function CameraDetail() {
                     <Typography variant="body2">{worker.frames_processed ?? 0}</Typography>
                   </DetailRow>
                   <DetailRow label="Alerts raised">
-                    <Typography variant="body2">{worker.events_emitted ?? 0}</Typography>
+                    <Typography variant="body2">
+                      {worker.events_emitted ?? 0} · {worker.clips_saved ?? 0} clip(s) saved
+                    </Typography>
                   </DetailRow>
                   {worker.last_error ? (
                     <DetailRow label="Last error">
@@ -338,7 +404,7 @@ export default function CameraDetail() {
                 title={running ? "Nothing being tracked" : "Worker is stopped"}
                 description={
                   running
-                    ? "No backpack, handbag or suitcase is currently in view."
+                    ? "No tracked object (wallet, watch, keys, glasses, bag, umbrella or phone) is currently in view."
                     : "Start the worker to see live tracking."
                 }
               />

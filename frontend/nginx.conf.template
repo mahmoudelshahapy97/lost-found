@@ -40,6 +40,19 @@ server {
         add_header Cache-Control "no-store";
     }
 
+    # MJPEG live view: an endless multipart response. Buffered, nginx would
+    # hold frames back until its buffer filled and the view would stutter.
+    location ~ ^/api/v1/cameras/[^/]+/stream$ {
+        proxy_pass        ${LF_API_URL};
+        proxy_buffering   off;
+        proxy_cache       off;
+        proxy_read_timeout 1h;
+        proxy_set_header  Host              $host;
+        proxy_set_header  X-Real-IP         $remote_addr;
+        proxy_set_header  X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header  X-Forwarded-Proto $scheme;
+    }
+
     location /api/ {
         proxy_pass       ${LF_API_URL};
         proxy_set_header Host              $host;

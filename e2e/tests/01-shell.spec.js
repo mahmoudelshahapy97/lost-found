@@ -30,6 +30,25 @@ test("the versioned API answers behind the same origin", async ({ request }) => 
   expect(body.data).toHaveProperty("total");
 });
 
+test("the analytics summary is zero-filled and timezone-aware", async ({ request }) => {
+  const response = await request.get("/api/v1/analytics/summary", {
+    headers: authHeaders(),
+    params: { days: 7, tz: "Africa/Cairo" },
+  });
+  expect(response.ok(), `GET /api/v1/analytics/summary -> ${response.status()}`).toBeTruthy();
+  const body = await response.json();
+  expect(body.data.window.bucket).toBe("day");
+  // One point per day even when nothing fired - the chart must not skip days.
+  expect(body.data.series).toHaveLength(7);
+  expect(body.data.kpis).toHaveProperty("false_positive_pct");
+
+  const bad = await request.get("/api/v1/analytics/summary", {
+    headers: authHeaders(),
+    params: { tz: "Not/AZone" },
+  });
+  expect(bad.status()).toBe(422);
+});
+
 test("a camera left behind by an earlier run is removed", async ({ request }) => {
   // Housekeeping, not an assertion about the app: the camera name is unique in
   // the database, so a half-finished previous run would fail spec 02 on create.
@@ -49,6 +68,7 @@ test("the dashboard loads with its shell intact", async ({ page }) => {
     "Dashboard",
     "Cameras",
     "Alerts",
+    "Analytics",
     "Lost reports",
     "Found gallery",
     "Search",
@@ -67,6 +87,7 @@ test("the dashboard loads with its shell intact", async ({ page }) => {
 const ROUTES = [
   { label: "Cameras", path: "/cameras", heading: "Cameras" },
   { label: "Alerts", path: "/events", heading: "Alerts" },
+  { label: "Analytics", path: "/analytics", heading: "Analytics" },
   { label: "Lost reports", path: "/lost-items", heading: "Lost reports" },
   { label: "Found gallery", path: "/found-items", heading: "Found gallery" },
   { label: "Search", path: "/search", heading: "Search the found gallery" },

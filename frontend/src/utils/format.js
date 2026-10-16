@@ -17,6 +17,11 @@ export const fromNow = (value) => (value ? dayjs(value).fromNow() : "—");
 export const toDateTimeLocal = (value) =>
   value ? dayjs(value).format("YYYY-MM-DDTHH:mm") : "";
 
+/** A datetime-local value (browser-local, no zone) as a UTC ISO string for the API. */
+export const fromDateTimeLocal = (value) => (value ? dayjs(value).toISOString() : "");
+
+export const formatTime = (value) => (value ? dayjs(value).format("HH:mm:ss") : "—");
+
 /** Seconds as a human span: 45s, 3m 20s, 2h 05m. */
 export function formatDuration(seconds) {
   if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return "—";
@@ -30,7 +35,7 @@ export function formatDuration(seconds) {
 }
 
 /**
- * Similarity scores and detection confidences are 0-1 floats. Percentages are
+ * Match scores and detection confidences are 0-1 floats. Percentages are
  * what an operator compares at a glance; the raw float stays in the tooltip.
  */
 export const formatScore = (value, digits = 1) =>

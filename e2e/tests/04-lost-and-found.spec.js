@@ -5,9 +5,9 @@ import { SEED, TINY_PNG, authHeaders, collectPageProblems } from "./helpers.js";
  * The feature the whole system exists for: someone reports a lost item, the
  * gallery is ranked against it, and an operator confirms the pairing.
  *
- * The seeded reports are used for the matching assertions because their vectors
- * were planted near a specific found item, which makes the ranking
- * deterministic. The upload path is exercised separately, with a real file.
+ * The seeded reports are used for the matching assertions because each shares
+ * its object type and colour with a specific found item, which makes the
+ * rule-based ranking deterministic. The upload path is exercised separately.
  */
 test.describe.configure({ mode: "serial" });
 
@@ -48,26 +48,25 @@ test("a report with a photo is filed and lands on its matching page", async ({ p
   const problems = collectPageProblems(page);
   await page.goto("/lost-items/new");
 
-  await page.getByLabel("Description").fill(`${MARKER} black leather backpack, red keyring`);
+  await page.getByLabel("Description").fill(`${MARKER} black leather bag, red keyring`);
   await page.getByLabel("Your name").fill("E2E Reporter");
   await page.getByLabel("Email").fill("e2e@example.com");
 
   await page.getByLabel("Object type").click();
-  await page.getByRole("option", { name: "Backpack" }).click();
+  await page.getByRole("option", { name: "Bag" }).click();
 
-  // A real multipart upload: this is the path that runs the photo through CLIP,
-  // so it is the one that proves the embedding pipeline is wired up.
+  // A real multipart upload: the path that decodes the photo and reads its colour.
   await page.setInputFiles('input[type="file"]', {
-    name: "lost-backpack.png",
+    name: "lost-bag.png",
     mimeType: "image/png",
     buffer: TINY_PNG,
   });
-  await expect(page.getByText("lost-backpack.png")).toBeVisible();
+  await expect(page.getByText("lost-bag.png")).toBeVisible();
 
   await page.getByRole("button", { name: "File report" }).click();
 
-  // Embedding on CPU is slow; the navigation is the signal the write landed.
-  await expect(page).toHaveURL(/\/lost-items\/[0-9a-f-]{36}$/, { timeout: 90_000 });
+  // The navigation is the signal the write landed.
+  await expect(page).toHaveURL(/\/lost-items\/[0-9a-f-]{36}$/, { timeout: 30_000 });
 
   const listed = await (
     await request.get("/api/v1/lost-items?per_page=100", { headers: authHeaders() })
@@ -75,8 +74,8 @@ test("a report with a photo is filed and lands on its matching page", async ({ p
   const ours = listed.lost_items.find((item) => item.description?.includes(MARKER));
   expect(ours, "report was not persisted").toBeTruthy();
   expect(ours.reporter_email).toBe("e2e@example.com");
-  expect(ours.class_name).toBe("backpack");
-  // The photo was embedded, which is what makes the report matchable at all.
+  expect(ours.class_name).toBe("bag");
+  // The colour was read from the photo; matching weighs it.
   expect(ours.dominant_color).toBeTruthy();
 
   expect(problems, problems.join("\n")).toEqual([]);
@@ -93,49 +92,83 @@ test("the report appears in the list with its status", async ({ page }) => {
 
 test("a seeded report ranks its planted found item first", async ({ page }) => {
   const problems = collectPageProblems(page);
-  await page.goto(`/lost-items/${SEED.lostBlackBackpack}`);
+  await page.goto(`/lost-items/${SEED.lostBlackBag}`);
 
   await expect(page.getByText("Candidates from the found gallery")).toBeVisible();
 
-  // The seed plants this report's vector next to the black backpack's, so the
-  // top card must be that item and must score far above the 55% floor.
+  // Same type, same colour, found an hour after the loss: the top card must be
+  // that item, scoring near the top of the scale.
   const firstCard = page.getByTestId("match-card").first();
   await expect(firstCard).toBeVisible({ timeout: 60_000 });
-  await expect(firstCard).toContainText("Backpack");
+  await expect(firstCard).toContainText("Bag");
 
   const score = await firstCard.getByText(/^\d+\.\d%$/).first().textContent();
   expect(Number.parseFloat(score)).toBeGreaterThan(80);
 
-  // The breakdown is shown, not just the total: "81%" alone does not tell an
-  // operator whether the match came from the picture or from the words.
-  await expect(firstCard).toContainText("Image similarity");
+  // The reasons are shown, not just the total.
+  await expect(firstCard).toContainText("Same type");
+  await expect(firstCard).toContainText("Same colour");
 
   expect(problems, problems.join("\n")).toEqual([]);
 });
 
-test("text search finds the red suitcase in the gallery", async ({ page }) => {
+test("search filters by camera, type and time, and keeps them in the URL", async ({ page }) => {
   const problems = collectPageProblems(page);
   await page.goto("/search");
 
   await expect(
     page.getByRole("heading", { name: "Search the found gallery", level: 5 })
   ).toBeVisible();
-  await expect(page.getByText("No search yet")).toBeVisible();
+  await expect(page.getByText(/\d+ items? found/)).toBeVisible();
 
-  // Not anchored: the field is required on this tab, so MUI appends " *" to
-  // the label text.
-  await page.getByLabel("Description").fill("red hard-shell suitcase");
-  // The seeded vectors are random rather than genuinely CLIP-derived, so a
-  // realistic threshold would return nothing. Dropping it proves the search
-  // round trip works end to end.
-  const slider = page.getByRole("slider", { name: "Minimum similarity" });
-  await slider.focus();
-  await slider.press("Home");
-  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await page.getByLabel("Camera").click();
+  await page.getByRole("option", { name: SEED.cameraName }).click();
+  await expect(page).toHaveURL(new RegExp(`camera_id=${SEED.cameraId}`));
+  await expect(page.getByTestId("search-result").first()).toBeVisible();
 
-  await expect(page.getByText(/\d+ candidates?/)).toBeVisible({ timeout: 60_000 });
+  await page.getByLabel("Object type").click();
+  await page.getByRole("option", { name: "Bag" }).click();
+  await expect(page).toHaveURL(/class_name=bag/);
+  const results = page.getByTestId("search-result");
+  await expect(results.first()).toBeVisible();
+  for (const card of await results.all()) await expect(card).toContainText("Bag");
+
+  // A quick range sets "From"; the seeded bag was found two hours ago.
+  await page.getByRole("button", { name: "Last hour" }).click();
+  await expect(page).toHaveURL(/start=/);
+  await page.getByRole("button", { name: "Last 7 days" }).click();
+  await expect(results.first()).toBeVisible();
+
+  // Filters live in the URL, so a reload keeps the search.
+  await page.reload();
+  await expect(page.getByLabel("Camera")).toContainText(SEED.cameraName);
+  await expect(results.first()).toBeVisible();
 
   expect(problems, problems.join("\n")).toEqual([]);
+});
+
+test("cards and table views show the same results", async ({ page }) => {
+  await page.goto(`/search?camera_id=${SEED.cameraId}`);
+  const results = page.getByTestId("search-result");
+  await expect(results.first()).toBeVisible();
+  const cards = await results.count();
+
+  await page.getByRole("button", { name: "Table" }).click();
+  await expect(page).toHaveURL(/view=table/);
+  await expect(page.getByRole("columnheader", { name: "Camera" })).toBeVisible();
+  await expect(results).toHaveCount(cards);
+
+  await page.getByRole("button", { name: "Cards" }).click();
+  await expect(page).not.toHaveURL(/view=table/);
+});
+
+test("clear filters resets the search", async ({ page }) => {
+  await page.goto("/search?class_name=key&color=pink");
+  await expect(page.getByText("Nothing matches these filters")).toBeVisible();
+
+  await page.getByRole("button", { name: "Clear filters" }).first().click();
+  await expect(page).toHaveURL(/\/search$/);
+  await expect(page.getByText(/\d+ items? found/)).toBeVisible();
 });
 
 test("confirming a match resolves the report and claims the item", async ({ page, request }) => {
@@ -143,14 +176,14 @@ test("confirming a match resolves the report and claims the item", async ({ page
   // later search. On a re-run against an unseeded database there is nothing
   // left to confirm, and that is not a failure.
   const before = await (
-    await request.get(`/api/v1/lost-items/${SEED.lostRedSuitcase}`, { headers: authHeaders() })
+    await request.get(`/api/v1/lost-items/${SEED.lostRedUmbrella}`, { headers: authHeaders() })
   ).json();
   test.skip(
     before.status !== "OPEN",
     `report is already ${before.status} — re-apply database/seed.sql to run this`
   );
 
-  await page.goto(`/lost-items/${SEED.lostRedSuitcase}`);
+  await page.goto(`/lost-items/${SEED.lostRedUmbrella}`);
 
   const firstCard = page.getByTestId("match-card").first();
   await expect(firstCard).toBeVisible({ timeout: 60_000 });
@@ -167,7 +200,7 @@ test("confirming a match resolves the report and claims the item", async ({ page
     .poll(
       async () => {
         const report = await (
-          await request.get(`/api/v1/lost-items/${SEED.lostRedSuitcase}`, { headers: authHeaders() })
+          await request.get(`/api/v1/lost-items/${SEED.lostRedUmbrella}`, { headers: authHeaders() })
         ).json();
         return report.status;
       },
@@ -178,8 +211,8 @@ test("confirming a match resolves the report and claims the item", async ({ page
   const gallery = await (
     await request.get("/api/v1/found-items?per_page=100", { headers: authHeaders() })
   ).json();
-  const claimed = gallery.found_items.find((item) => item.class_name === "suitcase" && item.status === "CLAIMED");
-  expect(claimed, "no suitcase was marked claimed").toBeTruthy();
+  const claimed = gallery.found_items.find((item) => item.class_name === "umbrella" && item.status === "CLAIMED");
+  expect(claimed, "no umbrella was marked claimed").toBeTruthy();
 
   await expect(page.getByText("Resolved").first()).toBeVisible({ timeout: 30_000 });
 });

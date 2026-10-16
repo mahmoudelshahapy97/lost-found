@@ -39,25 +39,21 @@ BASE_URL=http://localhost:5173 ./e2e/run.sh
 
 Specs 03 and 04 assert against the rows in `database/seed.sql` rather than
 waiting for the detection pipeline to produce something. That is deliberate:
-CLIP and YOLO on CPU make a full detect-to-alert cycle minutes long and
+YOLO on CPU makes a full detect-to-alert cycle minutes long and
 non-deterministic, which is a bad foundation for assertions about *the console*.
 
 Both files `test.skip` themselves when the tables are empty, with a message
 naming the seed, so an unseeded database reads as "load the fixture" rather than
 as a wall of failures.
 
-The seeded vectors are reproducible random stand-ins, not real CLIP embeddings —
-two lost reports are planted next to a specific found item so the ranking is
-deterministic. That is why `04` drops the similarity threshold to 0 for the
-free-text search: a realistic floor would correctly reject a random vector, and
-the assertion is about the round trip, not about CLIP's judgement.
+Two seeded lost reports share their object type and colour with a specific
+found item, so the rule-based ranking is deterministic. The search specs filter
+the seeded camera rather than asserting exact counts, because a running camera
+keeps adding real items to the same gallery.
 
-Spec 02 does start a real worker, so the RTSP path is exercised. Bring up the
-stream first, or that spec asserts only that the worker registered:
-
-```bash
-docker compose --profile testing up -d mediamtx
-```
+Spec 02 does start a real worker, so the RTSP path is exercised. `mediamtx`
+comes up with the stack (`docker compose up`); if it is not running, that spec
+asserts only that the worker registered.
 
 ## Auth: one login, shared by everything
 

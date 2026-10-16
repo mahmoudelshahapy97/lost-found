@@ -1,5 +1,5 @@
 # app/api/routes/lostfound_router.py
-"""Reporting lost items and matching them against the auto-harvested found gallery."""
+"""Lost reports, the searchable found gallery, and rule-based lost <-> found matching."""
 
 import logging
 from datetime import datetime
@@ -16,7 +16,6 @@ from app.schemas.lostfound_schemas import (
     LostItemListResponse,
     MatchConfirmRequest,
     MatchListResponse,
-    TextSearchRequest,
 )
 from app.services.matching_service import matching_service
 from app.utils.image_utils import decode_jpeg
@@ -55,10 +54,10 @@ async def _read_image(upload: UploadFile) -> np.ndarray:
 @router.post("/lost-items", status_code=status.HTTP_201_CREATED)
 async def report_lost_item(
     photo: Optional[UploadFile] = File(None, description="Photo of the lost item"),
-    description: Optional[str] = Form(None, description="e.g. 'black leather backpack'"),
+    description: Optional[str] = Form(None, description="e.g. 'black leather bag'"),
     reporter_name: Optional[str] = Form(None),
     reporter_email: Optional[str] = Form(None),
-    class_name: Optional[str] = Form(None, description="backpack | handbag | suitcase"),
+    class_name: Optional[str] = Form(None, description="wallet | hand_watch | key | Glasses | bag | umbrella | mobile_phone"),
     lost_after: Optional[datetime] = Form(
         None, description="Only consider items found after this time"
     ),
@@ -66,8 +65,8 @@ async def report_lost_item(
 ) -> Dict[str, Any]:
     """Report a lost item with a photo, a description, or both.
 
-    The photo is embedded with CLIP into the same 512-d space as the object crops
-    harvested from the cameras, which is what makes cross-matching possible.
+    Matching uses the object type, the colour (read from the photo, or a colour
+    word in the description) and ``lost_after``; the photo is kept for staff.
     """
     if photo is None and not description:
         raise HTTPException(
@@ -123,7 +122,7 @@ async def get_lost_item(
 async def get_matches(
     lost_id: UUID,
     top_k: Optional[int] = Query(None, ge=1, le=50),
-    min_similarity: Optional[float] = Query(None, ge=0.0, le=1.0),
+    min_score: Optional[float] = Query(None, ge=0.0, le=1.0),
     persist: bool = Query(True, description="Store the shortlist for later review"),
     current_user: Dict[str, Any] = Depends(require_role("viewer")),
 ) -> Dict[str, Any]:
@@ -135,7 +134,7 @@ async def get_matches(
             )
 
         matches = await matching_service.find_matches_for_lost_item(
-            lost_id, top_k=top_k, min_similarity=min_similarity, persist=persist
+            lost_id, top_k=top_k, min_score=min_score, persist=persist
         )
         return {"lost_id": lost_id, "count": len(matches), "matches": matches}
     except HTTPException:
@@ -147,69 +146,33 @@ async def get_matches(
         )
 
 
-# =================================================================== ad-hoc search
-@router.post("/search/image", response_model=MatchListResponse)
-async def search_by_image(
-    photo: UploadFile = File(..., description="Photo to search the found gallery with"),
-    description: Optional[str] = Form(None),
-    class_name: Optional[str] = Form(None),
-    top_k: Optional[int] = Form(None),
-    min_similarity: Optional[float] = Form(None),
-    current_user: Dict[str, Any] = Depends(require_role("viewer")),
-) -> Dict[str, Any]:
-    """Search the found gallery with a photo without filing a lost report."""
-    try:
-        image = await _read_image(photo)
-        matches = await matching_service.search_by_image(
-            image,
-            description=description,
-            class_name=class_name,
-            top_k=top_k,
-            min_similarity=min_similarity,
-        )
-        return {"lost_id": None, "count": len(matches), "matches": matches}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Image search failed: %s", e, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Image search failed."
-        )
-
-
-@router.post("/search/text", response_model=MatchListResponse)
-async def search_by_text(
-    payload: TextSearchRequest,
-    current_user: Dict[str, Any] = Depends(require_role("viewer")),
-) -> Dict[str, Any]:
-    """Search the found gallery by description alone - CLIP shares one text/image space."""
-    try:
-        matches = await matching_service.search_by_text(
-            payload.description,
-            class_name=payload.class_name,
-            top_k=payload.top_k,
-            min_similarity=payload.min_similarity,
-        )
-        return {"lost_id": None, "count": len(matches), "matches": matches}
-    except Exception as e:
-        logger.error("Text search failed: %s", e, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Text search failed."
-        )
-
-
 # ================================================================== found items
 @router.get("/found-items", response_model=FoundItemListResponse)
 async def list_found_items(
     status_filter: Optional[str] = Query(None, alias="status"),
     camera_id: Optional[UUID] = Query(None),
+    class_name: Optional[str] = Query(None, description="wallet | hand_watch | key | Glasses | bag | umbrella | mobile_phone"),
+    color: Optional[str] = Query(None, description="Dominant colour, e.g. black, blue, red"),
+    start: Optional[datetime] = Query(None, description="ISO8601 lower bound on found_at"),
+    end: Optional[datetime] = Query(None, description="ISO8601 upper bound on found_at"),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     current_user: Dict[str, Any] = Depends(require_role("viewer")),
 ) -> Dict[str, Any]:
-    """The found gallery, populated automatically from abandoned-object events."""
+    """The found gallery and the search page: filter by camera, time, type, colour, status."""
+    if start and end and start > end:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="'start' is after 'end'."
+        )
     return await matching_service.list_found_items(
-        status=status_filter, camera_id=camera_id, page=page, per_page=per_page
+        status=status_filter,
+        camera_id=camera_id,
+        class_name=class_name,
+        color=color,
+        start=start,
+        end=end,
+        page=page,
+        per_page=per_page,
     )
 
 

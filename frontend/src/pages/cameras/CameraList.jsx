@@ -261,7 +261,7 @@ export default function CameraList() {
         <Card>
           <EmptyState
             title="No cameras registered"
-            description="Add an RTSP source and a detection worker will start watching it for unattended backpacks, handbags and suitcases."
+            description="Add an RTSP source and a detection worker will start watching it for unattended wallets, watches, keys, glasses, bags, umbrellas and phones."
             icon={<VideocamIcon fontSize="inherit" />}
             action={
               canManage && (

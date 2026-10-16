@@ -9,12 +9,12 @@ from uuid import UUID
 
 import numpy as np
 
+from app.core.config import config
 from app.core.database import db_manager
 from app.services.abandonment_service import AbandonmentEvent
-from app.services.embedding_service import embedding_service
 from app.utils.color_utils import dominant_color
+from app.utils import visual_similarity
 from app.utils.image_utils import annotate_abandoned, bytes_to_base64, crop_box, encode_jpeg
-from app.utils.vector_utils import to_pgvector
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +41,17 @@ class EventService:
         """
         annotated_jpeg: Optional[bytes] = None
         crop = None
+        features = None
 
         if frame is not None:
             annotated = annotate_abandoned(
                 frame, event.box, event.class_name, event.unattended_seconds
             )
             annotated_jpeg = encode_jpeg(annotated)
-            crop = crop_box(frame, event.box)
+            crop = crop_box(frame, event.box, context_ratio=config.crop_context_ratio)
+            # Features from the box itself: the context around the crop would
+            # put the floor into the colour histogram.
+            features = visual_similarity.extract(crop_box(frame, event.box, padding=0))
 
         x1, y1, x2, y2 = event.box
         query = """
@@ -64,7 +68,7 @@ class EventService:
             query,
             (
                 camera_id,
-                str(event.track_id),
+                event.track_key or str(event.track_id),
                 event.class_name,
                 event.confidence,
                 json.dumps({"x1": x1, "y1": y1, "x2": x2, "y2": y2}),
@@ -85,7 +89,7 @@ class EventService:
             )
             return None
 
-        await self._create_found_item(stored["event_id"], camera_id, event.class_name, crop)
+        await self._create_found_item(stored["event_id"], camera_id, event.class_name, crop, features)
         logger.info(
             "Recorded abandoned %s on camera %s (event %s)",
             event.class_name,
@@ -100,27 +104,34 @@ class EventService:
         camera_id: UUID,
         class_name: str,
         crop: Optional[np.ndarray],
+        features: Optional[visual_similarity.VisualFeatures] = None,
     ) -> Optional[UUID]:
-        """Embed the object crop so it becomes searchable in the found gallery."""
-        embedding = None
+        """Add the object to the found gallery, searchable by camera, time, type and colour."""
         color = None
         crop_jpeg = None
 
         if crop is not None:
             crop_jpeg = encode_jpeg(crop)
             color = dominant_color(crop)
-            embedding = await embedding_service.embed_image_async(crop)
 
         query = """
             INSERT INTO found_item (
-                event_id, camera_id, class_name, dominant_color, crop_jpeg, embedding
+                event_id, camera_id, class_name, dominant_color, crop_jpeg, phash, color_hist
             )
-            VALUES ($1, $2, $3, $4, $5, $6::text::vector)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING found_id
         """
         result = await self.db_manager.execute_query(
             query,
-            (event_id, camera_id, class_name, color, crop_jpeg, to_pgvector(embedding)),
+            (
+                event_id,
+                camera_id,
+                class_name,
+                color,
+                crop_jpeg,
+                features.phash if features else None,
+                features.histogram_bytes if features else None,
+            ),
             fetch_one=True,
         )
         return result["found_id"] if result else None
@@ -170,6 +181,7 @@ class EventService:
             SELECT e.event_id, e.camera_id, c.name AS camera_name, e.track_key,
                    e.class_name, e.confidence, e.bbox, e.owner_track_id,
                    e.first_seen_at, e.abandoned_at, e.status,
+                   e.clip_path IS NOT NULL AS has_clip,
                    f.found_id, f.dominant_color{frame_column}
             FROM abandoned_event e
             LEFT JOIN camera c ON c.camera_id = e.camera_id
@@ -195,7 +207,8 @@ class EventService:
         frame_column = ", e.frame_jpeg" if include_frame else ""
         row = await self.db_manager.execute_query(
             f"""
-            SELECT e.*, c.name AS camera_name, f.found_id, f.dominant_color{frame_column}
+            SELECT e.*, e.clip_path IS NOT NULL AS has_clip,
+                   c.name AS camera_name, f.found_id, f.dominant_color{frame_column}
             FROM abandoned_event e
             LEFT JOIN camera c ON c.camera_id = e.camera_id
             LEFT JOIN found_item f ON f.event_id = e.event_id
@@ -213,6 +226,20 @@ class EventService:
             fetch_one=True,
         )
         return bytes(row["frame_jpeg"]) if row and row["frame_jpeg"] else None
+
+    async def set_clip_path(self, event_id: UUID, clip_path: Optional[str]) -> None:
+        await self.db_manager.execute_query(
+            "UPDATE abandoned_event SET clip_path = $1 WHERE event_id = $2",
+            (clip_path, event_id),
+        )
+
+    async def get_clip_path(self, event_id: UUID) -> Optional[str]:
+        row = await self.db_manager.execute_query(
+            "SELECT clip_path FROM abandoned_event WHERE event_id = $1",
+            (event_id,),
+            fetch_one=True,
+        )
+        return row["clip_path"] if row else None
 
     async def update_status(self, event_id: UUID, status: str) -> Optional[Dict[str, Any]]:
         row = await self.db_manager.execute_query(
@@ -248,6 +275,9 @@ class EventService:
         if not row:
             return {}
         event = dict(row)
+        # The on-disk path is an implementation detail; clients get has_clip and
+        # fetch the file through /events/{id}/clip.
+        event.pop("clip_path", None)
         bbox = event.get("bbox")
         if isinstance(bbox, str):
             try:

@@ -27,9 +27,13 @@ ENV OPENCV_FFMPEG_CAPTURE_OPTIONS="rtsp_transport;tcp|timeout;10000000|stimeout;
 
 RUN python -m pip install --upgrade pip
 
-# CPU-only torch keeps the image ~2 GB instead of ~7 GB
+# CUDA torch by default, for MODEL_DEVICE=cuda on the host GPU. Build with
+# --build-arg TORCH_VARIANT=cpu for a CPU-only image (~2 GB instead of ~7 GB).
+ARG TORCH_VARIANT=cu128
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/${TORCH_VARIANT} torch torchvision
+
 COPY requirements.txt .
-RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 

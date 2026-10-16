@@ -67,24 +67,22 @@ class MatchCandidate(BaseModel):
     dominant_color: Optional[str] = None
     found_at: datetime
     status: str
-    image_similarity: float
-    text_similarity: Optional[float] = None
     same_class: bool = False
     same_color: bool = False
+    # Likeness of the report's photo to the found crop (perceptual hash + colour
+    # histogram), 0-1; None when the report has no photo.
+    visual_similarity: Optional[float] = None
+    # Weighted mean of type, colour, timing and photo likeness (see matching_service), 0-1.
     score: float
+    # Repeat sightings of the same object on the same camera, folded into this one.
+    sightings: int = 1
+    last_seen_at: Optional[datetime] = None
 
 
 class MatchListResponse(BaseModel):
     lost_id: Optional[UUID] = None
     count: int
     matches: List[MatchCandidate]
-
-
-class TextSearchRequest(BaseModel):
-    description: str = Field(..., min_length=2, description="e.g. 'black leather backpack'")
-    class_name: Optional[str] = None
-    top_k: Optional[int] = Field(None, ge=1, le=50)
-    min_similarity: Optional[float] = Field(None, ge=0.0, le=1.0)
 
 
 class MatchConfirmRequest(BaseModel):

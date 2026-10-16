@@ -12,7 +12,7 @@ from app.services.abandonment_service import (
 from app.services.tracking_service import Detection
 
 PERSON_CLASS = 0
-BACKPACK_CLASS = 24
+BAG_CLASS = 24  # COCO backpack; the app stores it as "bag"
 
 BAG_BOX = (100.0, 100.0, 150.0, 150.0)
 NEAR_PERSON_BOX = (160.0, 100.0, 200.0, 180.0)   # 10 px gap from the bag
@@ -36,8 +36,8 @@ def params(**overrides) -> AbandonmentParams:
 def bag(box=BAG_BOX, track_id: int = 7) -> Detection:
     return Detection(
         track_id=track_id,
-        class_id=BACKPACK_CLASS,
-        class_name="backpack",
+        class_id=BAG_CLASS,
+        class_name="bag",
         confidence=0.9,
         box=box,
     )
@@ -62,6 +62,11 @@ def run(
     return events
 
 
+def left_at_start(t: float) -> List[Detection]:
+    """The owner puts the bag down at t=0 and is gone from the next frame on."""
+    return [bag(), person()] if t == 0 else [bag()]
+
+
 def frames_for(seconds: float, dt: float, detections_at) -> List[List[Detection]]:
     """Build ``seconds / dt`` frames, calling ``detections_at(t)`` for each timestamp."""
     count = int(seconds / dt) + 1
@@ -80,10 +85,21 @@ def test_owner_leaves_object_becomes_abandoned():
 
     assert len(events) == 1
     event = events[0]
-    assert event.class_name == "backpack"
+    assert event.class_name == "bag"
     assert event.track_id == 7
     assert event.owner_track_id == 1
     assert event.unattended_seconds >= 5.0
+    assert tracker.tracks[7].status is ObjectStatus.ABANDONED
+
+
+@pytest.mark.parametrize("dt", [0.3, 0.37, 0.43])
+def test_static_detected_when_frames_do_not_land_on_the_window(dt: float):
+    """Real frame times never sit exactly one window apart; stillness must still register."""
+    tracker = AbandonmentTracker(params=params())
+
+    events = run(tracker, frames_for(12.0, dt, left_at_start), dt=dt)
+
+    assert len(events) == 1
     assert tracker.tracks[7].status is ObjectStatus.ABANDONED
 
 
@@ -100,6 +116,90 @@ def test_owner_returns_before_timeout_no_event():
 
     assert events == []
     assert tracker.tracks[7].status is ObjectStatus.ATTENDED
+
+
+def test_passer_by_does_not_reset_the_clock():
+    """Someone walking past an abandoned bag is not its owner coming back."""
+    tracker = AbandonmentTracker(params=params(stand_in_seconds=3.0))
+
+    def at(t: float) -> List[Detection]:
+        if 3.0 <= t < 4.5:
+            return [bag(), person(NEAR_PERSON_BOX, track_id=2)]
+        return left_at_start(t)
+
+    # Alone from t=1 (static window), so 5 s later it fires - within 8 s. Had
+    # the passer-by been adopted, the clock would restart at 4.5 and miss it.
+    events = run(tracker, frames_for(8.0, 0.5, at))
+
+    assert len(events) == 1
+
+
+def test_stranger_who_stays_close_becomes_the_owner():
+    """A person lingering by the bag is plausibly its owner under a new track id."""
+    tracker = AbandonmentTracker(params=params(stand_in_seconds=3.0))
+
+    def at(t: float) -> List[Detection]:
+        # Owner 1 drops it and leaves; "person 2" (owner back under a new id)
+        # turns up at t=2 and stays.
+        return [bag(), person(NEAR_PERSON_BOX, track_id=2)] if t >= 2.0 else left_at_start(t)
+
+    events = run(tracker, frames_for(12.0, 0.5, at))
+
+    assert events == []
+    assert tracker.tracks[7].status is ObjectStatus.ATTENDED
+    assert tracker.tracks[7].owners == [1, 2]
+
+
+def test_lingering_by_a_bag_nobody_brought_does_not_claim_it():
+    """Someone waiting next to a bag that was already there is not its owner."""
+    tracker = AbandonmentTracker(params=params(stand_in_seconds=3.0))
+
+    def at(t: float) -> List[Detection]:
+        # Bag alone from the start; a stranger waits beside it from t=2 to t=6.
+        return [bag(), person(NEAR_PERSON_BOX, track_id=2)] if 2.0 <= t < 6.0 else [bag()]
+
+    events = run(tracker, frames_for(14.0, 0.5, at))
+
+    assert events == []
+    assert tracker.tracks[7].owners == []
+
+
+def test_new_track_id_on_the_same_spot_keeps_the_timers():
+    """The tracker re-ids a blinking bag; the replacement must not restart the clock."""
+    tracker = AbandonmentTracker(params=params())
+
+    def at(t: float) -> List[Detection]:
+        if 3.0 <= t < 4.0:
+            return []  # detector lost it for a moment
+        if t == 0:
+            return [bag(), person()]
+        return [bag(track_id=7 if t < 3.0 else 8)]
+
+    # Alone and still from t=1, abandoned 5 s later. Starting afresh at t=4
+    # (new window, new timer) would not fire before t=10.
+    events = run(tracker, frames_for(8.0, 0.5, at))
+
+    assert len(events) == 1
+    assert events[0].track_id == 8
+    assert set(tracker.tracks) == {8}
+
+
+def test_owner_walking_toward_the_camera_has_left():
+    """Their box grows and keeps overlapping the bag in the image, but they have gone."""
+    tracker = AbandonmentTracker(params=params())
+
+    def at(t: float) -> List[Detection]:
+        if t < 2.0:
+            return [bag(), person()]
+        # From t=2 the owner walks toward the camera: feet move down the frame
+        # and the box grows, staying level with the bag on screen.
+        step = (t - 2.0) * 60.0
+        return [bag(), person((150.0, 60.0, 200.0 + step / 2, 180.0 + step))]
+
+    events = run(tracker, frames_for(12.0, 0.5, at))
+
+    assert len(events) == 1
+    assert events[0].owner_track_id == 1
 
 
 def test_owner_present_but_too_far_starts_the_clock():
@@ -129,14 +229,55 @@ def test_moving_object_never_abandoned():
     assert tracker.tracks[7].status is ObjectStatus.MOVING
 
 
-def test_unowned_object_starts_timer_immediately():
-    """A bag that is already alone when it goes static needs no owner handover."""
+def test_object_nobody_was_seen_with_never_alarms():
+    """Scenery the detector mistakes for a bag has no owner, so it is not abandoned."""
     tracker = AbandonmentTracker(params=params())
+
+    events = run(tracker, frames_for(12.0, 0.5, lambda t: [bag()]))
+
+    assert events == []
+    assert tracker.tracks[7].status is ObjectStatus.UNATTENDED
+
+
+def test_unowned_object_alarms_when_no_owner_is_required():
+    """With require_owner off, a bag already alone when it goes static starts the clock."""
+    tracker = AbandonmentTracker(params=params(require_owner=False))
 
     events = run(tracker, frames_for(12.0, 0.5, lambda t: [bag()]))
 
     assert len(events) == 1
     assert events[0].owner_track_id is None
+
+
+def test_group_member_staying_keeps_the_bag_attended():
+    """Two people arrive with one bag; one leaves, the other stays - not abandoned."""
+    tracker = AbandonmentTracker(params=params())
+    beside = (40.0, 100.0, 90.0, 180.0)  # the other side of the bag
+
+    def at(t: float) -> List[Detection]:
+        if t == 0:
+            return [bag(), person(), person(beside, track_id=2)]
+        return [bag(), person(beside, track_id=2)]
+
+    events = run(tracker, frames_for(12.0, 0.5, at))
+
+    assert events == []
+    assert tracker.tracks[7].owner_track_id == 1
+    assert 2 in tracker.tracks[7].owners
+    assert tracker.tracks[7].status is ObjectStatus.ATTENDED
+
+
+def test_distant_person_is_not_next_to_the_bag():
+    """Radii scale with each person's height: a small, far figure is not minding the bag."""
+    tracker = AbandonmentTracker(params=params())
+    far_small = (210.0, 90.0, 225.0, 130.0)  # 40 px tall, 60 px from the bag
+
+    def at(t: float) -> List[Detection]:
+        return left_at_start(t) + ([person(far_small, track_id=2)] if t > 0 else [])
+
+    events = run(tracker, frames_for(8.0, 0.5, at))
+
+    assert len(events) == 1
 
 
 def test_event_emitted_exactly_once():
@@ -175,7 +316,7 @@ def test_object_inside_roi_still_fires():
     roi = [(0.0, 0.0), (400.0, 0.0), (400.0, 400.0), (0.0, 400.0)]
     tracker = AbandonmentTracker(params=params(), roi=roi)
 
-    events = run(tracker, frames_for(12.0, 0.5, lambda t: [bag()]))
+    events = run(tracker, frames_for(12.0, 0.5, left_at_start))
 
     assert len(events) == 1
 

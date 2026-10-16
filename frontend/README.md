@@ -73,7 +73,7 @@ Two settings there are not optional:
 | `/lost-items/new` | Report a lost item, with a photo |
 | `/lost-items/:id` | One report and its ranked candidates |
 | `/found-items` | The auto-harvested found gallery |
-| `/search` | Ad-hoc search by photo or description |
+| `/search` | Filter the found gallery by camera, date/time, object type, colour and status; cards or table |
 | `/system` | Workers and the configuration in force |
 
 Filters on `/events`, `/lost-items` and `/found-items` live in the query string,

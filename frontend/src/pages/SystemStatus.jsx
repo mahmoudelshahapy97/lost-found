@@ -250,7 +250,7 @@ export default function SystemStatus() {
                 title="Matching"
                 values={effective.matching}
                 formatter={(key, value) =>
-                  key === "match_min_similarity" ? formatScore(value) : undefined
+                  key === "match_min_score" ? formatScore(value) : undefined
                 }
               />
             </Grid>

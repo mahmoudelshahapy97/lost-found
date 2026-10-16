@@ -199,24 +199,26 @@ WHERE frame_jpeg IS NOT NULL
 -- from an abandoned_event by event_service._create_found_item().
 
 -- :name create_found_item
--- The embedding arrives as a pgvector text literal ('[0.1,0.2,...]'), hence the
--- ::text::vector double cast - asyncpg has no native codec for VECTOR.
-INSERT INTO found_item (
-    event_id, camera_id, class_name, dominant_color, crop_jpeg, embedding
-)
-VALUES ($1, $2, $3, $4, $5, $6::text::vector)
+INSERT INTO found_item (event_id, camera_id, class_name, dominant_color, crop_jpeg)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING found_id;
 
 -- :name list_found_items
--- GET /api/v1/found-items
+-- GET /api/v1/found-items - also the search page. Every filter is optional; the
+-- service only adds the conditions it was given. idx_found_camera_time serves
+-- the common "this camera, this time range" case.
 SELECT f.found_id, f.event_id, f.camera_id, c.name AS camera_name,
        f.class_name, f.dominant_color, f.found_at, f.status
 FROM found_item f
 LEFT JOIN camera c ON c.camera_id = f.camera_id
-WHERE f.status    = $1
-  AND f.camera_id = $2
+WHERE f.status         = $1
+  AND f.camera_id      = $2
+  AND f.class_name     = $3
+  AND f.dominant_color = $4
+  AND f.found_at      >= $5
+  AND f.found_at      <= $6
 ORDER BY f.found_at DESC
-LIMIT $3 OFFSET $4;
+LIMIT $7 OFFSET $8;
 
 -- :name count_found_items
 SELECT COUNT(*) AS total FROM found_item f WHERE f.status = $1;
@@ -235,20 +237,18 @@ RETURNING found_id, status;
 SELECT class_name,
        COUNT(*)                                        AS total,
        COUNT(*) FILTER (WHERE status = 'UNCLAIMED')    AS unclaimed,
-       COUNT(*) FILTER (WHERE status = 'CLAIMED')      AS claimed,
-       COUNT(*) FILTER (WHERE embedding IS NOT NULL)   AS searchable
+       COUNT(*) FILTER (WHERE status = 'CLAIMED')      AS claimed
 FROM found_item
 GROUP BY class_name
 ORDER BY total DESC;
 
--- :name found_items_missing_embedding
--- Diagnostic. A crop with no embedding is invisible to matching - it means CLIP
--- was unavailable when the event fired, or no crop could be taken from the frame.
-SELECT f.found_id, f.class_name, f.found_at, c.name AS camera_name,
-       (f.crop_jpeg IS NOT NULL) AS has_crop
+-- :name found_items_missing_crop
+-- Diagnostic. No crop means nothing to show staff - the box fell outside the
+-- frame, or the frame itself was missing when the event fired.
+SELECT f.found_id, f.class_name, f.found_at, c.name AS camera_name
 FROM found_item f
 LEFT JOIN camera c ON c.camera_id = f.camera_id
-WHERE f.embedding IS NULL
+WHERE f.crop_jpeg IS NULL
 ORDER BY f.found_at DESC;
 
 -- :name found_gallery_size
@@ -262,15 +262,15 @@ FROM found_item;
 -- 4. LOST ITEMS
 -- ==========================================================================
 -- Lost reports filed by people. A report may carry a photo, a description, or
--- both - which is why embedding and text_embedding are independently nullable.
+-- both; dominant_color comes from the photo, or a colour word in the description.
 
 -- :name create_lost_item
 -- POST /api/v1/lost-items (multipart)
 INSERT INTO lost_item (
     reporter_name, reporter_email, description, class_name, dominant_color,
-    photo_jpeg, embedding, text_embedding, lost_after
+    photo_jpeg, lost_after
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7::text::vector, $8::text::vector, $9)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING lost_id, reporter_name, reporter_email, description, class_name,
           dominant_color, lost_after, reported_at, status;
 
@@ -287,13 +287,9 @@ SELECT lost_id, reporter_name, reporter_email, description, class_name,
 FROM lost_item
 WHERE lost_id = $1;
 
--- :name get_lost_item_vectors
--- What find_matches_for_lost_item() loads before searching. The ::text casts
--- hand the vectors back as pgvector literals so they can be passed straight
--- back in as query parameters.
-SELECT lost_id, class_name, dominant_color, lost_after,
-       embedding::text      AS embedding,
-       text_embedding::text AS text_embedding
+-- :name get_lost_item_criteria
+-- What find_matches_for_lost_item() loads before ranking.
+SELECT lost_id, class_name, dominant_color, lost_after, reported_at
 FROM lost_item
 WHERE lost_id = $1;
 
@@ -345,36 +341,34 @@ ORDER BY l.reported_at;
 -- ==========================================================================
 -- 5. MATCHING
 -- ==========================================================================
--- Vector search and the match_result bookkeeping around it.
---
--- <=> is pgvector's cosine DISTANCE, so similarity is 1 - (a <=> b). Ordering by
--- the raw distance (not by the similarity expression) is what lets the planner
--- use idx_found_embedding; wrapping it in 1 - (...) would force a sequential scan.
+-- Rule-based candidate retrieval and the match_result bookkeeping around it.
+-- No models: candidates share the report's object type or colour, and the
+-- Python side weighs type, colour and time and folds repeat sightings together.
 
--- :name search_found_items
--- The candidate retrieval behind every match endpoint. $1 is the query vector,
--- $2 the optional text vector, $3 the optional "only items found after" bound,
--- $4 the over-fetch limit (top_k * 3) that leaves the Python rerank room to
--- reorder on class and colour bonuses.
+-- :name match_candidates
+-- $1 class_name, $2 colour (either may be NULL), $3 the optional "only items
+-- found after" bound, $4 the candidate cap. The event bbox comes along so repeat
+-- detections of one static object can be collapsed.
 SELECT f.found_id, f.event_id, f.camera_id, c.name AS camera_name,
-       f.class_name, f.dominant_color, f.found_at, f.status,
-       1 - (f.embedding <=> $1::text::vector) AS image_similarity,
-       CASE WHEN $2::text IS NULL THEN NULL
-            ELSE 1 - (f.embedding <=> $2::text::vector)
-       END                                    AS text_similarity
+       f.class_name, f.dominant_color, f.found_at, f.status, e.bbox
 FROM found_item f
-LEFT JOIN camera c ON c.camera_id = f.camera_id
-WHERE f.embedding IS NOT NULL
-  AND f.status = 'UNCLAIMED'
+LEFT JOIN camera c          ON c.camera_id = f.camera_id
+LEFT JOIN abandoned_event e ON e.event_id  = f.event_id
+WHERE f.status = 'UNCLAIMED'
   AND ($3::timestamptz IS NULL OR f.found_at >= $3)
-ORDER BY f.embedding <=> $1::text::vector
+  AND (($1::text IS NULL AND $2::text IS NULL)
+       OR f.class_name = $1 OR f.dominant_color = $2
+       -- black / gray / brown read as each other under CCTV light
+       OR ($2::text IN ('black', 'gray', 'brown')
+           AND f.dominant_color IN ('black', 'gray', 'brown')))
+ORDER BY f.found_at
 LIMIT $4;
 
 -- :name persist_suggestions
 -- Written in one executemany() after a ranking run so operators can revisit the
 -- shortlist. Re-running matching refreshes the score rather than duplicating.
 INSERT INTO match_result (lost_id, found_id, score, method)
-VALUES ($1, $2, $3, 'clip_cosine')
+VALUES ($1, $2, $3, 'rule_based')
 ON CONFLICT (lost_id, found_id)
 DO UPDATE SET score = EXCLUDED.score, created_at = NOW();
 
@@ -434,27 +428,14 @@ LEFT JOIN camera c ON c.camera_id = f.camera_id
 WHERE m.confirmed
 ORDER BY m.created_at DESC;
 
--- :name similar_found_items
--- "Is this the same bag we already have?" - dedupes the gallery by comparing a
--- found item against every other one.
-SELECT f.found_id,
-       f.class_name,
-       f.dominant_color,
-       f.found_at,
-       1 - (f.embedding <=> (SELECT embedding FROM found_item WHERE found_id = $1))
-           AS similarity
-FROM found_item f
-WHERE f.found_id <> $1
-  AND f.embedding IS NOT NULL
-ORDER BY f.embedding <=> (SELECT embedding FROM found_item WHERE found_id = $1)
-LIMIT $2;
-
 -- ==========================================================================
 -- 6. ANALYTICS AND OPERATIONS
 -- ==========================================================================
--- Reporting and operational queries. Nothing in the API calls these; they back
--- the dashboard charts and answer the questions that come up while running the
--- system ("why did nothing fire last night?").
+-- Reporting and operational queries. These are the all-time forms; the API's
+-- GET /analytics/summary (app/services/analytics_service.py) serves windowed,
+-- per-camera, timezone-aware versions of them to the Analytics page. The rest
+-- answer the questions that come up while running the system ("why did
+-- nothing fire last night?").
 
 -- :name events_per_day
 -- Series for the dashboard chart. generate_series supplies the zero days, which
@@ -513,7 +494,6 @@ ORDER BY false_positive_pct DESC NULLS LAST;
 -- back to a person.
 SELECT (SELECT COUNT(*) FROM abandoned_event)                              AS events_detected,
        (SELECT COUNT(*) FROM found_item)                                   AS items_harvested,
-       (SELECT COUNT(*) FROM found_item WHERE embedding IS NOT NULL)       AS items_searchable,
        (SELECT COUNT(*) FROM lost_item)                                    AS reports_filed,
        (SELECT COUNT(*) FROM match_result WHERE confirmed)                 AS reunions;
 

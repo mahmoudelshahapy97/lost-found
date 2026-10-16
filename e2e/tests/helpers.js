@@ -78,9 +78,9 @@ export const SEED = {
   cameraId: "11111111-1111-4111-8111-000000000001",
   cameraName: "Terminal 1 - Arrivals Hall",
   openEventId: "22222222-2222-4222-8222-000000000001",
-  foundBlackBackpack: "33333333-3333-4333-8333-000000000001",
-  lostBlackBackpack: "44444444-4444-4444-8444-000000000001",
-  lostRedSuitcase: "44444444-4444-4444-8444-000000000002",
+  foundBlackBag: "33333333-3333-4333-8333-000000000001",
+  lostBlackBag: "44444444-4444-4444-8444-000000000001",
+  lostRedUmbrella: "44444444-4444-4444-8444-000000000002",
 };
 
 /** Find a camera by name through the API, or null when it is not registered. */
@@ -117,8 +117,7 @@ export async function deleteLostReports(request, marker) {
 
 /**
  * Poll an API predicate until it holds. Used for the things a UI assertion
- * cannot wait on cheaply — a CPU-bound embedding call producing its first
- * result, or a worker reaching a connected state.
+ * cannot wait on cheaply — a worker reaching a connected state.
  */
 export async function waitForApi(
   request,
@@ -167,7 +166,7 @@ export function collectPageProblems(page) {
 }
 
 /** A 1x1 PNG, as the bytes a file input would hand over. Enough to exercise the
- *  upload path and the CLIP embedding without shipping a fixture image. */
+ *  upload path and the colour read without shipping a fixture image. */
 export const TINY_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
   "base64"

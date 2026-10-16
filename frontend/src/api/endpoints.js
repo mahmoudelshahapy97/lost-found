@@ -3,8 +3,8 @@ import client, { mediaUrl } from "./client";
 /**
  * One function per backend route, so no component builds a URL by hand.
  *
- * Mirrors app/api/routes/: camera_router, event_router, lostfound_router and
- * system_router. The lost-and-found router carries no prefix of its own, so its
+ * Mirrors app/api/routes/: camera_router, event_router, analytics_router,
+ * lostfound_router and system_router. The lost-and-found router carries no prefix of its own, so its
  * paths sit directly under /api/v1.
  */
 
@@ -67,6 +67,12 @@ export const cameras = {
    * it the browser serves the frame it already has and the view never updates.
    */
   snapshotUrl: (id, bust = Date.now()) => mediaUrl(`/cameras/${id}/snapshot`, { t: bust }),
+
+  /**
+   * MJPEG live view of the annotated detection output, as an <img> source.
+   * Bump `bust` to reconnect after the worker restarts.
+   */
+  streamUrl: (id, bust = Date.now()) => mediaUrl(`/cameras/${id}/stream`, { t: bust }),
 };
 
 // --- events ---------------------------------------------------------------
@@ -79,6 +85,16 @@ export const events = {
 
   /** The annotated frame captured when the object was declared abandoned. */
   frameUrl: (id) => mediaUrl(`/events/${id}/frame`),
+
+  /** The annotated mp4 from before the item was left until after the alert. */
+  clipUrl: (id) => mediaUrl(`/events/${id}/clip`),
+};
+
+// --- analytics ------------------------------------------------------------
+export const analytics = {
+  /** {days, camera_id, tz} -> KPIs, series, heatmap and breakdowns for one window. */
+  summary: (params, opts) =>
+    client.get("/analytics/summary", { params, ...opts }).then((r) => r.data),
 };
 
 // --- lost items -----------------------------------------------------------
@@ -112,22 +128,6 @@ export const foundItems = {
   cropUrl: (id) => mediaUrl(`/found-items/${id}/crop`),
 };
 
-// --- search ---------------------------------------------------------------
-export const search = {
-  byText: (payload) => client.post("/search/text", payload).then((r) => r.data),
-  byImage: ({ photo, description, className, topK, minSimilarity }) => {
-    const form = new FormData();
-    form.append("photo", photo);
-    if (description) form.append("description", description);
-    if (className) form.append("class_name", className);
-    if (topK) form.append("top_k", String(topK));
-    if (minSimilarity !== undefined && minSimilarity !== null) {
-      form.append("min_similarity", String(minSimilarity));
-    }
-    return client.post("/search/image", form).then((r) => r.data);
-  },
-};
-
 // --- matches --------------------------------------------------------------
 export const matches = {
   confirm: ({ lostId, foundId, score = 1.0 }) =>
@@ -147,8 +147,8 @@ export default {
   system,
   cameras,
   events,
+  analytics,
   lostItems,
   foundItems,
-  search,
   matches,
 };

@@ -2,6 +2,7 @@
 """Dominant colour extraction, used as a cheap secondary matching attribute."""
 
 import logging
+import re
 from typing import Optional, Tuple
 
 import cv2
@@ -74,6 +75,24 @@ def _name_hsv(h: float, s: float, v: float) -> str:
                 return "brown"
             return name
     return "unknown"
+
+
+_COLOR_WORDS = {name for name, _, _ in _HUE_NAMES} | {"black", "white", "gray", "beige", "brown"}
+_COLOR_ALIASES = {"grey": "gray", "silver": "gray", "navy": "blue", "tan": "beige", "cream": "beige"}
+
+
+def color_from_text(text: Optional[str]) -> Optional[str]:
+    """First colour word in a description ("dark-blue bag" -> "blue").
+
+    Lets a text-only search earn the same colour bonus a photo would.
+    """
+    if not text:
+        return None
+    for word in re.findall(r"[a-z]+", text.lower()):
+        word = _COLOR_ALIASES.get(word, word)
+        if word in _COLOR_WORDS:
+            return word
+    return None
 
 
 def color_agreement(a: Optional[str], b: Optional[str]) -> bool:

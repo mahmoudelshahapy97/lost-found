@@ -114,6 +114,32 @@ export default function EventDetail() {
 
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, lg: 7 }}>
+          <Card sx={{ mb: 2 }}>
+            <Box sx={{ px: 2.5, py: 1.5 }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                Video
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Annotated footage from before the item was left until after the alert.
+              </Typography>
+            </Box>
+            <Divider />
+            {data.has_clip ? (
+              <Box
+                component="video"
+                controls
+                preload="metadata"
+                src={eventApi.clipUrl(eventId)}
+                sx={{ width: "100%", maxHeight: 420, display: "block", bgcolor: "common.black" }}
+              />
+            ) : (
+              <Typography variant="body2" color="text.secondary" sx={{ px: 2.5, py: 3 }}>
+                No clip recorded for this alert. A clip is saved a few seconds after the alert
+                fires; older ones are removed by retention.
+              </Typography>
+            )}
+          </Card>
+
           <Card>
             <Box sx={{ px: 2.5, py: 1.5 }}>
               <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
@@ -206,8 +232,8 @@ export default function EventDetail() {
                 </Typography>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  This object was cropped and embedded into the searchable gallery, so a lost report
-                  can be matched against it.
+                  This object was cropped into the searchable gallery, so a lost report can be
+                  matched against it.
                 </Typography>
                 <Link component={RouterLink} to="/found-items" variant="body2">
                   Open the found gallery

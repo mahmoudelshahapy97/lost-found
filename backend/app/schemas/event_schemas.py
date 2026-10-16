@@ -32,6 +32,7 @@ class EventResponse(BaseModel):
     status: str
     found_id: Optional[UUID] = None
     dominant_color: Optional[str] = None
+    has_clip: bool = False
     frame_base64: Optional[str] = None
 
 

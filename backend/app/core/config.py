@@ -1,7 +1,7 @@
 # app/core/config.py
 """Central application configuration loaded from environment variables and .env."""
 
-from typing import List, Literal
+from typing import Dict, List, Literal
 
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -105,21 +105,34 @@ class Settings(BaseSettings):
     # =========================================================================
     # MODELS
     # =========================================================================
-    model_cache_dir: str = "models"
     model_device: str = "cpu"
 
-    yolo_model_path: str = "models/yolo11n.pt"
-    yolo_confidence: float = 0.35
+    yolo_model_path: str = "models/yolo26l.pt"
+    yolo_confidence: float = 0.05  # low on purpose: the tracker yaml decides what starts a track
     yolo_input_size: int = 640
-    yolo_tracker: str = "bytetrack.yaml"
+    # Tuned ByteTrack: starts tracks on weak detections and keeps a lost track
+    # for 30 s at 5 fps, so a small, still object holds one id (see the file).
+    yolo_tracker: str = "trackers/lostfound_bytetrack.yaml"
+    # One box per object: COCO scores a bag as backpack, handbag and suitcase at
+    # once, and without class-agnostic NMS each becomes its own track and alert.
+    yolo_agnostic_nms: bool = True
+    # FP16 inference on CUDA (~25% faster on a T4); ignored on CPU.
+    yolo_half: bool = True
+    # Object detections ByteTrack leaves unconfirmed are followed by box overlap
+    # (see tracking_service); this IoU links them frame to frame.
+    loose_track_iou: float = 0.5
 
-    # COCO class ids
+    # COCO class ids: 24 backpack, 25 umbrella, 26 handbag, 28 suitcase, 67 cell phone
     person_class_id: int = 0
-    object_class_ids: List[int] = [24, 26, 28]  # backpack, handbag, suitcase
-
-    clip_model_name: str = "ViT-B-32"
-    clip_pretrained: str = "laion2b_s34b_b79k"
-    embedding_dim: int = 512
+    object_class_ids: List[int] = [24, 25, 26, 28, 67]
+    # Detector label -> the name stored and shown in the app. Folding the three
+    # COCO bag classes into one stops a single bag flipping type between frames.
+    class_name_map: Dict[str, str] = {
+        "backpack": "bag",
+        "handbag": "bag",
+        "suitcase": "bag",
+        "cell phone": "mobile_phone",
+    }
 
     @property
     def tracked_class_ids(self) -> List[int]:
@@ -143,25 +156,102 @@ class Settings(BaseSettings):
     stream_start_stagger_delay: float = 2.0
     stream_worker_restart_delay: float = 5.0
 
+    # Every live viewer costs one JPEG encode per frame; cap them so a wall of
+    # open browser tabs cannot starve detection.
+    max_mjpeg_clients: int = 4
+
+    # =========================================================================
+    # WORKER SUPERVISION
+    # =========================================================================
+    # Restarts workers that died, errored, or wedged inside a blocking read,
+    # and starts enabled cameras that have no worker. Without it a camera whose
+    # model load failed stays dark until someone notices by hand.
+    worker_supervision_enabled: bool = True
+    worker_supervision_interval_s: float = 15.0
+    worker_restart_backoff_base_s: float = 5.0
+    worker_restart_backoff_max_s: float = 300.0
+
+    # =========================================================================
+    # EVIDENCE CLIPS
+    # =========================================================================
+    # One annotated mp4 per abandoned event: clip_pre_seconds before the moment
+    # the object is declared abandoned and clip_post_seconds after. The drop
+    # itself happens about abandon_seconds before the event, so the pre-roll has
+    # to be longer than that to show who left the item.
+    clip_enabled: bool = True
+    clip_dir: str = "data/clips"
+    clip_pre_seconds: float = 40.0
+    clip_post_seconds: float = 10.0
+    clip_max_width: int = 960
+    clip_jpeg_quality: int = 70
+
+    # =========================================================================
+    # RETENTION
+    # =========================================================================
+    retention_enabled: bool = True
+    retention_interval_s: float = 21600.0  # 6 hours
+    clip_retention_days: int = 30
+    clip_max_total_mb: int = 5120
+
     # =========================================================================
     # ABANDONMENT STATE MACHINE
     # =========================================================================
     static_tolerance_px: float = 25.0
+    # ...or this fraction of the object's height, whichever is larger: a bag near
+    # the camera jitters by more pixels than one far away.
+    static_tolerance_ratio: float = 0.5
     static_window_seconds: float = 3.0
     owner_distance_px: float = 180.0
     abandon_distance_px: float = 260.0
+    # Radii in heights of the person concerned (0 = use the pixel values above).
+    # A person's height is the local scale, so the radius shrinks with distance
+    # from the camera the way floor distances do. Sensors 2025 sets the owner
+    # radius at about one person height; PETS 2006 abandons at 1.5x that (3 m
+    # vs 2 m).
+    owner_radius_heights: float = 1.0
+    abandon_radius_heights: float = 1.5
+    # An item nobody was ever seen with never alarms (PETS 2006): it filters the
+    # bins and chairs a COCO model mistakes for bags.
+    require_owner: bool = True
+    # Ignore objects whose shorter side is below this - too far away to judge.
+    min_object_size_px: float = 10.0
+    # Once the owner is gone, a stranger counts as minding the object only after
+    # staying within the owner radius this long - walking past does not.
+    stand_in_seconds: float = 3.0
     abandon_seconds: float = 30.0
     track_max_misses: int = 30
+    # A new track id overlapping a just-dropped object by this IoU is that object
+    # again (the tracker re-ids blinking detections); it inherits the timers.
+    reid_iou: float = 0.5
     event_cooldown_seconds: float = 300.0
 
     # =========================================================================
     # MATCHING
     # =========================================================================
+    # Lost reports are matched by rules, no models: a weighted sum of the
+    # same object type, a compatible colour, and how soon after the loss the
+    # item was found. The weights sum to 1, so a score reads as a percentage.
     match_top_k: int = 10
-    match_min_similarity: float = 0.55
-    match_same_class_bonus: float = 0.05
-    match_same_color_bonus: float = 0.03
-    match_text_weight: float = 0.25
+    match_class_weight: float = 0.5
+    match_color_weight: float = 0.3
+    match_time_weight: float = 0.2
+    # When the report has a photo: weight of its likeness to the found crop
+    # (perceptual hash + colour histogram, see utils/visual_similarity). The
+    # score is renormalised over the parts available.
+    match_visual_weight: float = 0.3
+    # Share of the hash in that likeness; the colour histogram carries the rest,
+    # being the sturdier of the two between a phone photo and a CCTV crop.
+    match_hash_share: float = 0.3
+    # Fraction of the reporter's photo kept (centred) - drops background edges.
+    match_photo_keep: float = 0.8
+    # A sighting this many hours after the reported loss earns no time credit.
+    match_window_hours: float = 72.0
+    # Suggestions scoring below this are not shown.
+    match_min_score: float = 0.3
+    # Same camera + boxes overlapping this much = one object re-detected.
+    match_dedupe_iou: float = 0.6
+    # Context around the box when cropping, as a fraction of its longer side.
+    crop_context_ratio: float = 0.15
     max_upload_bytes: int = 10 * 1024 * 1024
 
 

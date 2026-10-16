@@ -1,5 +1,5 @@
 # app/core/database.py
-"""Asyncpg connection pool with pgvector codec registration."""
+"""Asyncpg connection pool, schema readiness checks and idempotent upgrades."""
 
 import asyncio
 import logging
@@ -108,6 +108,40 @@ async def wait_for_schema(timeout: float = 60.0) -> bool:
         timeout,
     )
     return False
+
+
+# schema.sql only runs on the first boot of an empty volume, so a column added
+# to it later never reaches an existing database. Each statement here must be
+# idempotent: it runs on every start.
+SCHEMA_UPGRADES = (
+    "ALTER TABLE abandoned_event ADD COLUMN IF NOT EXISTS clip_path TEXT",
+    # Search is by camera / time / type / colour now; the CLIP and DINOv2
+    # vectors (and their HNSW indexes) are no longer written or read.
+    "DROP INDEX IF EXISTS idx_found_embedding, idx_found_visual_embedding, "
+    "idx_lost_embedding, idx_lost_visual_embedding",
+    "ALTER TABLE found_item DROP COLUMN IF EXISTS embedding, "
+    "DROP COLUMN IF EXISTS visual_embedding",
+    "ALTER TABLE lost_item DROP COLUMN IF EXISTS embedding, "
+    "DROP COLUMN IF EXISTS text_embedding, DROP COLUMN IF EXISTS visual_embedding",
+    # The search page filters a camera's items by time.
+    "CREATE INDEX IF NOT EXISTS idx_found_camera_time ON found_item (camera_id, found_at DESC)",
+    # Photo matching by perceptual hash + colour histogram (no model).
+    "ALTER TABLE found_item ADD COLUMN IF NOT EXISTS phash BIGINT, "
+    "ADD COLUMN IF NOT EXISTS color_hist BYTEA",
+    "ALTER TABLE lost_item ADD COLUMN IF NOT EXISTS phash BIGINT, "
+    "ADD COLUMN IF NOT EXISTS color_hist BYTEA",
+)
+
+
+async def ensure_schema_upgrades() -> None:
+    """Bring an existing database up to the columns the code expects."""
+    pool = get_pool()
+    if pool is None:
+        return
+    async with pool.acquire() as conn:
+        for statement in SCHEMA_UPGRADES:
+            await conn.execute(statement)
+    logger.info("Schema upgrades applied (%s statements).", len(SCHEMA_UPGRADES))
 
 
 class DatabaseManager:

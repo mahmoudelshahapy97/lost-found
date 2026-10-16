@@ -190,7 +190,7 @@ export default function LostItems() {
         <Card>
           <EmptyState
             title={status ? "No reports with this status" : "No lost items reported"}
-            description="A report with a photo is embedded into the same vector space as the crops harvested from the cameras — that shared space is what makes matching possible."
+            description="A report is matched against the found gallery on object type, colour and the time it was lost."
             icon={<ReportProblemIcon fontSize="inherit" />}
             action={
               canReport && (

@@ -36,6 +36,7 @@ class RTSPReader:
         self._capture: Optional[cv2.VideoCapture] = None
         self.consecutive_failures = 0
         self.frames_read = 0
+        self._last_read_at: Optional[float] = None
 
     # ------------------------------------------------------------------ state
     @property
@@ -71,6 +72,7 @@ class RTSPReader:
             return False
 
     def release(self) -> None:
+        self._last_read_at = None
         if self._capture is not None:
             try:
                 self._capture.release()
@@ -95,7 +97,8 @@ class RTSPReader:
 
     # ------------------------------------------------------------------- read
     def read(self) -> Tuple[bool, Optional[np.ndarray]]:
-        """Decode one frame, discarding ``frame_skip - 1`` frames before it.
+        """Decode one frame, discarding at least ``frame_skip - 1`` frames before
+        it -- more when that would fall behind the source (see _frames_to_skip).
 
         ``grab()`` advances the stream without decoding, which is far cheaper
         than decoding frames we are about to throw away.
@@ -104,11 +107,12 @@ class RTSPReader:
             return False, None
 
         try:
-            for _ in range(self.frame_skip - 1):
+            for _ in range(self._frames_to_skip()):
                 if not self._capture.grab():
                     break
 
             ok, frame = self._capture.read()
+            self._last_read_at = time.monotonic()
             if not ok or frame is None:
                 self.consecutive_failures += 1
                 return False, None
@@ -120,6 +124,25 @@ class RTSPReader:
             self.consecutive_failures += 1
             logger.warning("Read error on %s: %s", self.url, e)
             return False, None
+
+    def _frames_to_skip(self) -> int:
+        """Discard at least every frame that arrived since the last read, plus one.
+
+        A live stream does not wait for us: consuming ``frame_skip`` frames per
+        cycle at ``target_process_fps`` falls behind a faster source (5 x 5 =
+        25 fps from a 30 fps camera), the backlog grows until the RTSP server
+        drops packets, and the broken stream forces a reconnect. Keying the skip
+        to elapsed time keeps us at the live edge; the extra frame drains any
+        backlog left by a slow cycle.
+        """
+        skip = self.frame_skip - 1
+        fps = self.source_fps
+        if fps and self._last_read_at is not None:
+            elapsed = time.monotonic() - self._last_read_at
+            # Capped so one stall cannot turn into a multi-second grab loop.
+            due = min(int(elapsed * fps) + 1, int(fps * 2))
+            skip = max(skip, due)
+        return skip
 
     def should_reconnect(self) -> bool:
         return self.consecutive_failures >= config.rtsp_read_failure_limit

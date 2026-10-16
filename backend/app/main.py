@@ -12,12 +12,13 @@ from app.core.config import config
 from app.core.database import (
     check_postgres_health,
     close_db_pool,
+    ensure_schema_upgrades,
     get_pool,
     init_db_pool,
     wait_for_schema,
 )
 from app.core.logging_config import setup_logging
-from app.services.model_registry import model_registry
+from app.services import retention
 from app.services.stream_manager import stream_manager
 from app.services.user_service import user_service
 
@@ -39,12 +40,11 @@ async def lifespan(app: FastAPI):
         logger.warning("Database health check failed at startup.")
 
     schema_ready = await wait_for_schema()
-
-    # Loading CLIP here means the first lost-item report is not paying for it.
-    try:
-        model_registry.warmup()
-    except Exception as e:
-        logger.error("Model warmup failed: %s", e, exc_info=True)
+    if schema_ready:
+        try:
+            await ensure_schema_upgrades()
+        except Exception as e:
+            logger.error("Schema upgrade failed: %s", e, exc_info=True)
 
     if schema_ready:
         try:
@@ -53,16 +53,22 @@ async def lifespan(app: FastAPI):
             logger.error("Could not ensure bootstrap admin: %s", e, exc_info=True)
 
         try:
-            await stream_manager.start_enabled_cameras()
+            await stream_manager.startup()
         except Exception as e:
             logger.error("Could not start camera workers: %s", e, exc_info=True)
+
+        retention.start()
     else:
         logger.warning("Schema not ready; bootstrap admin and camera workers were not started.")
+        # The supervisor starts enabled cameras once the tables appear.
+        await stream_manager.startup()
 
     logger.info("Startup complete.")
     yield
 
     logger.info("Shutdown sequence initiated...")
+    await retention.stop()
+
     try:
         await stream_manager.shutdown()
     except Exception as e:
@@ -128,6 +134,7 @@ async def health_check():
             "total": len(workers),
             "running": sum(1 for w in workers if w["running"]),
             "connected": sum(1 for w in workers if w["connected"]),
+            "supervisor_running": stream_manager.supervisor_running,
         },
     }
 

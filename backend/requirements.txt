@@ -25,7 +25,6 @@ Pillow
 ultralytics
 torch
 torchvision
-open-clip-torch
 
 # Misc
 aiofiles

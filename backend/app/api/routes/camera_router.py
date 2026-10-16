@@ -1,21 +1,28 @@
 # app/api/routes/camera_router.py
 import asyncio
 import logging
+import shutil
 from typing import Any, Dict, List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import StreamingResponse
 
 from app.api.deps import get_image_viewer, require_role
+from app.core.config import config
 from app.schemas.camera_schemas import CameraCreate, CameraResponse, CameraUpdate
 from app.services.camera_service import camera_service
 from app.services.rtsp_reader import grab_single_frame
-from app.services.stream_manager import stream_manager
-from app.utils.image_utils import encode_jpeg
+from app.services.stream_manager import clip_root, stream_manager
+from app.utils.image_utils import encode_jpeg, placeholder_frame
 from app.utils.response import create_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["cameras"], prefix="/cameras")
+
+# Each live viewer costs one JPEG encode per frame. Unbounded viewers would
+# compete with detection for the same CPU.
+_viewers = asyncio.Semaphore(config.max_mjpeg_clients)
 
 
 @router.post("", response_model=CameraResponse, status_code=status.HTTP_201_CREATED)
@@ -82,7 +89,11 @@ async def update_camera(
     payload: CameraUpdate,
     current_user: Dict[str, Any] = Depends(require_role("admin")),
 ) -> Dict[str, Any]:
-    """Patch a camera. A running worker is restarted so changes take effect at once."""
+    """Patch a camera, then make the worker match ``enabled``.
+
+    A running worker is restarted so changes take effect at once; enabling a
+    camera starts it and disabling one stops it.
+    """
     try:
         if not await camera_service.get_camera(camera_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found.")
@@ -91,11 +102,14 @@ async def update_camera(
             camera_id, **payload.model_dump(exclude_unset=True)
         )
 
-        was_running = stream_manager.get_worker(camera_id) is not None
-        if was_running:
+        has_worker = stream_manager.get_worker(camera_id) is not None
+        if camera["enabled"]:
+            if has_worker:
+                await stream_manager.restart_camera(camera_id)
+            else:
+                await stream_manager.start_camera(camera)
+        elif has_worker:
             await stream_manager.stop_camera(camera_id)
-        if camera["enabled"] and was_running:
-            await stream_manager.start_camera(camera)
 
         return camera
     except HTTPException:
@@ -117,6 +131,8 @@ async def delete_camera(
         deleted = await camera_service.delete_camera(camera_id)
         if not deleted:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found.")
+        # The events went with the camera (ON DELETE CASCADE); so do their clips.
+        await asyncio.to_thread(shutil.rmtree, clip_root() / str(camera_id), True)
         return create_response(True, "Camera deleted.", {"camera_id": str(camera_id)})
     except HTTPException:
         raise
@@ -131,11 +147,17 @@ async def delete_camera(
 async def start_camera(
     camera_id: UUID, current_user: Dict[str, Any] = Depends(require_role("operator"))
 ) -> Dict[str, Any]:
-    """Start the detection worker for a camera."""
+    """Start the detection worker for a camera and keep it running.
+
+    Sets ``enabled`` so the camera comes back after an API restart and the
+    supervisor restarts it if it dies.
+    """
     try:
         camera = await camera_service.get_camera(camera_id)
         if not camera:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found.")
+        if not camera["enabled"]:
+            camera = await camera_service.update_camera(camera_id, enabled=True)
 
         worker_status = await stream_manager.start_camera(camera)
         return create_response(True, "Camera worker started.", worker_status)
@@ -152,6 +174,14 @@ async def start_camera(
 async def stop_camera(
     camera_id: UUID, current_user: Dict[str, Any] = Depends(require_role("operator"))
 ) -> Dict[str, Any]:
+    """Stop the worker and clear ``enabled``, so it stays stopped across restarts.
+
+    The flag is cleared before the worker stops: the supervisor re-reads it
+    before any restart, so it cannot bring the camera straight back.
+    """
+    camera = await camera_service.get_camera(camera_id)
+    if camera and camera["enabled"]:
+        await camera_service.update_camera(camera_id, enabled=False)
     stopped = await stream_manager.stop_camera(camera_id)
     if not stopped:
         raise HTTPException(
@@ -170,7 +200,7 @@ async def camera_status(
         return create_response(
             True, "Camera worker is not running.", {"camera_id": str(camera_id), "running": False}
         )
-    return create_response(True, "Camera worker status.", worker.status())
+    return create_response(True, "Camera worker status.", stream_manager.worker_status(worker))
 
 
 @router.get(
@@ -178,7 +208,9 @@ async def camera_status(
     responses={200: {"content": {"image/jpeg": {}}, "description": "Latest frame"}},
 )
 async def camera_snapshot(
-    camera_id: UUID, current_user: Dict[str, Any] = Depends(get_image_viewer)
+    camera_id: UUID,
+    annotated: bool = Query(True, description="Draw tracked objects and their status"),
+    current_user: Dict[str, Any] = Depends(get_image_viewer),
 ) -> Response:
     """Latest frame from the running worker, or a one-shot grab when it is stopped."""
     camera = await camera_service.get_camera(camera_id)
@@ -186,7 +218,7 @@ async def camera_snapshot(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found.")
 
     worker = stream_manager.get_worker(camera_id)
-    frame = worker.last_frame() if worker else None
+    frame = worker.last_frame(annotated=annotated) if worker else None
 
     if frame is None:
         frame = await asyncio.to_thread(grab_single_frame, camera["rtsp_url"])
@@ -203,3 +235,61 @@ async def camera_snapshot(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not encode frame."
         )
     return Response(content=jpeg, media_type="image/jpeg")
+
+
+@router.get(
+    "/{camera_id}/stream",
+    responses={200: {"content": {"multipart/x-mixed-replace": {}}, "description": "MJPEG"}},
+)
+async def camera_stream(
+    camera_id: UUID,
+    request: Request,
+    current_user: Dict[str, Any] = Depends(get_image_viewer),
+) -> StreamingResponse:
+    """MJPEG live view of the annotated detection output, for an ``<img src>``."""
+    worker = stream_manager.get_worker(camera_id)
+    if worker is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No running worker for this camera."
+        )
+    if _viewers.locked():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Too many live viewers (limit {config.max_mjpeg_clients}). Use /snapshot instead.",
+        )
+
+    interval = 1.0 / max(0.1, config.target_process_fps)
+    waiting = placeholder_frame("Waiting for first frame...")
+
+    async def generate():
+        # Held for the life of the response; Starlette closes the generator
+        # when the client goes away.
+        async with _viewers:
+            last_sent = None
+            while True:
+                if await request.is_disconnected():
+                    break
+                # A replaced worker (supervisor restart) has a new object.
+                current = stream_manager.get_worker(camera_id)
+                if current is None:
+                    break
+                frame = current.last_frame(annotated=True)
+                if frame is None:
+                    frame = waiting
+                if frame is not last_sent:
+                    jpeg = await asyncio.to_thread(encode_jpeg, frame)
+                    if jpeg:
+                        yield (
+                            b"--frame\r\nContent-Type: image/jpeg\r\n"
+                            + f"Content-Length: {len(jpeg)}\r\n\r\n".encode()
+                            + jpeg
+                            + b"\r\n"
+                        )
+                    last_sent = frame
+                await asyncio.sleep(interval)
+
+    return StreamingResponse(
+        generate(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )

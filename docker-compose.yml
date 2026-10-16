@@ -2,9 +2,8 @@ name: lost-found
 
 # Full stack: database + API + operator console.
 #
-#   docker compose up --build                          everything
+#   docker compose up --build                          everything, test RTSP included
 #   docker compose up -d postgres                      just the database
-#   docker compose --profile testing up -d mediamtx    local RTSP for camera tests
 #
 # backend/docker-compose.yml still exists and still works -- it is the
 # backend-only stack, for when you are iterating on detection and do not want a
@@ -66,6 +65,8 @@ services:
       # of the image means a rebuild does not re-download ~350 MB.
       - ./backend/models:/app/models
       - ./backend/logs:/app/logs
+      # Evidence clips (data/clips/<camera_id>/<event_id>.mp4) survive rebuilds.
+      - ./backend/data:/app/data
     # Workers need time to release their captures before the container dies.
     stop_grace_period: 30s
     deploy:
@@ -73,6 +74,13 @@ services:
       # per-camera tracker state. Two replicas would open every camera twice
       # and double every alert.
       replicas: 1
+      # YOLO and CLIP run on the GPU (MODEL_DEVICE=cuda in backend/.env).
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   web:
     build:
@@ -87,27 +95,62 @@ services:
     ports:
       - "${WEB_HOST_PORT:-8082}:80"
 
-  # Local RTSP server for testing without a real camera. It republishes
-  # backend/videos/sample.mp4 on an endless loop, so the path exists as soon as
-  # the container is up:
+  # Local RTSP server for testing without a real camera. Each path below plays
+  # one clip from backend/videos on demand: starting a camera that reads it
+  # launches ffmpeg from the top of the clip, looping until the camera stops
+  # (mediamtx closes it ~10 s after the last reader leaves).
   #
-  #   docker compose --profile testing up -d mediamtx
+  # It starts with the rest of the stack: the seeded cameras all read from it,
+  # and without it every worker sits in reconnect backoff.
   #
   # Register the camera as rtsp://mediamtx:8554/lostfound -- that URL is
   # resolved by the api container, so "localhost" there would mean the
   # container itself. From the host it is rtsp://localhost:8556/lostfound.
   mediamtx:
     image: bluenviron/mediamtx:latest-ffmpeg
-    profiles: ["testing"]
     restart: unless-stopped
     environment:
       MTX_PROTOCOLS: tcp
       # -stream_loop -1 so the clip never ends: a worker reconnecting to a
       # finished stream looks like a broken camera rather than a test rig.
-      MTX_PATHS_LOSTFOUND_RUNONINIT: >-
+      # RUNONDEMANDRESTART restarts ffmpeg if it dies while a camera is reading.
+      MTX_PATHS_LOSTFOUND_RUNONDEMAND: >-
         ffmpeg -re -stream_loop -1 -i /videos/sample.mp4 -c copy -f rtsp
         rtsp://localhost:8554/lostfound
-      MTX_PATHS_LOSTFOUND_RUNONINITRESTART: "yes"
+      MTX_PATHS_LOSTFOUND_RUNONDEMANDRESTART: "yes"
+      # rtsp://mediamtx:8554/leftbehind0001
+      MTX_PATHS_LEFTBEHIND0001_RUNONDEMAND: >-
+        ffmpeg -re -stream_loop -1 -i "/videos/Left-Behined Item 0001.mp4" -c copy -f rtsp
+        rtsp://localhost:8554/leftbehind0001
+      MTX_PATHS_LEFTBEHIND0001_RUNONDEMANDRESTART: "yes"
+      MTX_PATHS_LEFTBEHIND0002_RUNONDEMAND: >-
+        ffmpeg -re -stream_loop -1 -i "/videos/Left-Behined Item 0002.mp4" -c copy -f rtsp
+        rtsp://localhost:8554/leftbehind0002
+      MTX_PATHS_LEFTBEHIND0002_RUNONDEMANDRESTART: "yes"
+      MTX_PATHS_LEFTBEHIND0003_RUNONDEMAND: >-
+        ffmpeg -re -stream_loop -1 -i "/videos/Left-Behined Item 0003.mp4" -c copy -f rtsp
+        rtsp://localhost:8554/leftbehind0003
+      MTX_PATHS_LEFTBEHIND0003_RUNONDEMANDRESTART: "yes"
+      MTX_PATHS_LEFTBEHIND0004_RUNONDEMAND: >-
+        ffmpeg -re -stream_loop -1 -i "/videos/Left-Behined Item 0004.mp4" -c copy -f rtsp
+        rtsp://localhost:8554/leftbehind0004
+      MTX_PATHS_LEFTBEHIND0004_RUNONDEMANDRESTART: "yes"
+      MTX_PATHS_LEFTBEHIND0005_RUNONDEMAND: >-
+        ffmpeg -re -stream_loop -1 -i "/videos/Left-Behined Item 0005.mp4" -c copy -f rtsp
+        rtsp://localhost:8554/leftbehind0005
+      MTX_PATHS_LEFTBEHIND0005_RUNONDEMANDRESTART: "yes"
+      MTX_PATHS_CCTV1_RUNONDEMAND: >-
+        ffmpeg -re -stream_loop -1 -i /videos/cctv_video1.mp4 -c copy -f rtsp
+        rtsp://localhost:8554/cctv1
+      MTX_PATHS_CCTV1_RUNONDEMANDRESTART: "yes"
+      MTX_PATHS_CCTV3_RUNONDEMAND: >-
+        ffmpeg -re -stream_loop -1 -i /videos/cctv_video3.mp4 -c copy -f rtsp
+        rtsp://localhost:8554/cctv3
+      MTX_PATHS_CCTV3_RUNONDEMANDRESTART: "yes"
+      MTX_PATHS_CCTV20_RUNONDEMAND: >-
+        ffmpeg -re -stream_loop -1 -i /videos/cctv_video20.mp4 -c copy -f rtsp
+        rtsp://localhost:8554/cctv20
+      MTX_PATHS_CCTV20_RUNONDEMANDRESTART: "yes"
     volumes:
       - ./backend/videos:/videos:ro
     ports:

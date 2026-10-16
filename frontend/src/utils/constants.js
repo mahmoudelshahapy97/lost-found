@@ -36,10 +36,20 @@ export const TRACK_STATUS = {
 };
 
 /**
- * The COCO classes the detector tracks, set by OBJECT_CLASS_IDS in
- * backend/.env: 24 backpack, 26 handbag, 28 suitcase.
+ * Item types a lost report can name. The live detector (COCO yolo26l, see
+ * OBJECT_CLASS_IDS / CLASS_NAME_MAP in backend/.env) produces bag, umbrella and
+ * mobile_phone; wallet, hand_watch, key and Glasses come from the custom
+ * lost_found.pt classes and still match found items on colour and time.
  */
-export const OBJECT_CLASSES = ["backpack", "handbag", "suitcase"];
+export const OBJECT_CLASSES = [
+  "wallet",
+  "hand_watch",
+  "key",
+  "Glasses",
+  "bag",
+  "umbrella",
+  "mobile_phone",
+];
 
 export const EVENT_STATUSES = Object.values(EVENT_STATUS);
 export const LOST_STATUSES = Object.values(LOST_STATUS);
@@ -75,12 +85,29 @@ export const TRACK_STATUS_COLOR = {
 
 export const POLL_INTERVAL_MS = Number(import.meta.env.VITE_POLL_INTERVAL_MS) || 5000;
 
+/** The colour names the backend assigns to crops (app/utils/color_utils.py). */
+export const ITEM_COLORS = [
+  "black",
+  "gray",
+  "white",
+  "brown",
+  "beige",
+  "red",
+  "orange",
+  "yellow",
+  "green",
+  "cyan",
+  "blue",
+  "purple",
+  "pink",
+];
+
 /** Default page size, matched to the API's per_page default. */
 export const PAGE_SIZE = 20;
 export const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
 /**
- * MATCH_MIN_SIMILARITY in backend/.env. Shown in the UI so a search that
- * returns nothing reads as "nothing cleared the bar" rather than "it broke".
+ * MATCH_MIN_SCORE in backend/.env: rule-based suggestions scoring below this
+ * are hidden. Shown so an empty shortlist reads as "nothing cleared the bar".
  */
-export const DEFAULT_MIN_SIMILARITY = 0.55;
+export const DEFAULT_MIN_MATCH_SCORE = 0.3;

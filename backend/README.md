@@ -5,12 +5,14 @@ lost-and-found system needs:
 
 1. **Abandoned-object detection** — YOLO + ByteTrack over live RTSP cameras. `abandoned` is never a
    detection class; it is a *status* derived from tracking, distance and time.
-2. **Lost ↔ found matching** — CLIP embeddings + pgvector cosine search, so a photo of a lost bag
-   can be matched against the object crops the cameras harvested automatically.
+2. **Lost ↔ found search and matching** — no models: the found gallery is filtered by camera,
+   date/time, object type and colour, and a lost report is matched by rules on the same fields.
 
-The found gallery is self-populating: every abandoned-object event contributes its cropped image and
-a 512-d CLIP embedding to `found_item`. A person reporting a loss uploads one photo, and the API
-ranks the gallery against it.
+The found gallery is self-populating: every abandoned-object event contributes its cropped image,
+object type and dominant colour to `found_item`. A person reporting a loss gives a type, a photo
+or a description (for the colour) and when it was lost, and the API ranks the gallery by rules:
+same type 50%, compatible colour 30%, found soon after the loss 20%. Repeat detections of one
+static object (same camera, overlapping boxes) are folded into one suggestion.
 
 ---
 
@@ -21,12 +23,12 @@ MOVING      centroid drifts more than static_tolerance_px
    ↓
 STATIC      centroid stable for static_window_seconds
             → nearest person within owner_distance_px is recorded as the owner
-   ↓
+   ↓/home/ubuntu
 ATTENDED    owner still in frame and within abandon_distance_px
 UNATTENDED  owner gone or too far → the clock starts
    ↓
 ABANDONED   unattended for abandon_seconds (default 30 s, the PETS2006 convention)
-            → event + annotated frame + embedded crop, emitted exactly once
+            → event + annotated frame + cropped found item, emitted exactly once
 ```
 
 If the owner comes back within range the timer resets. If the owner's track is lost to occlusion,
@@ -51,8 +53,8 @@ app/
 ├── core/           config.py (pydantic-settings), database.py (asyncpg), logging_config.py
 ├── schemas/        pydantic request/response models
 ├── services/       model_registry, rtsp_reader, tracking, abandonment, stream_manager,
-│                   camera, event, embedding, matching
-├── utils/          image, geometry, color, vector, response
+│                   camera, event, matching
+├── utils/          image, geometry, color, response
 └── main.py         app factory, lifespan, /health
 
 ../database/        schema, seed and reference queries (see database/README.md)
@@ -85,7 +87,7 @@ Services:
 
 | service    | what it is                                       | port |
 |------------|--------------------------------------------------|------|
-| `postgres` | `pgvector/pgvector:pg17`, schema auto-applied     | 5433 |
+| `postgres` | `pgvector/pgvector:pg17` (plain Postgres here), schema auto-applied | 5433 |
 | `api`      | this FastAPI app                                 | 8000 |
 | `mediamtx` | mediamtx looping `videos/sample.mp4` over RTSP    | 8554 |
 
@@ -102,7 +104,7 @@ image. The cost is that `docker compose up` here reports the `web` container
 as an orphan; harmless, and much better than a second stack running against a
 second, empty database. Do not pass `--remove-orphans`.
 
-The first boot downloads the YOLO and CLIP weights into `./models`, which is volume-mounted so
+The first boot downloads the YOLO weights into `./models`, which is volume-mounted so
 rebuilds do not re-download them.
 
 ## Running without Docker
@@ -110,7 +112,7 @@ rebuilds do not re-download them.
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-# point at a Postgres that has the pgvector extension and database/init/002_schema.sql applied
+# point at a Postgres that has database/schema.sql applied
 sed -i 's/^DB_HOST=.*/DB_HOST="localhost"/' .env
 uvicorn app.main:app --reload
 ```
@@ -184,10 +186,8 @@ Base prefix `/api/v1`. Every route needs `-H "Authorization: Bearer $TOKEN"` —
 | method | path | purpose |
 |---|---|---|
 | POST | `/lost-items` | report a loss (multipart photo and/or description) |
-| GET | `/lost-items/{id}/matches` | rank the found gallery against the report |
-| POST | `/search/image` | ad-hoc photo search, stores nothing |
-| POST | `/search/text` | search by description alone — CLIP shares one text/image space |
-| GET | `/found-items` | the auto-harvested gallery |
+| GET | `/lost-items/{id}/matches` | rank the found gallery against the report (rule-based) |
+| GET | `/found-items` | the gallery and the search page: filter by `camera_id`, `start`/`end` (ISO time), `class_name`, `color`, `status`; paginated |
 | GET | `/found-items/{id}/crop` | the cropped object image |
 | POST | `/matches/confirm` | confirm a pairing: report resolved, item claimed |
 | DELETE | `/matches` | reject a suggested pairing |
@@ -225,15 +225,16 @@ curl -s localhost:8000/api/v1/events/<event_id>/frame -H "$AUTH" -o alert.jpg
 # 4. report a loss and match it
 curl -s -X POST localhost:8000/api/v1/lost-items \
   -H "$AUTH" \
-  -F 'photo=@my_backpack.jpg' \
-  -F 'description=black leather backpack' \
+  -F 'photo=@my_bag.jpg' \
+  -F 'description=black leather bag' \
   -F 'reporter_email=me@example.com'
 curl -s localhost:8000/api/v1/lost-items/<lost_id>/matches -H "$AUTH" | python3 -m json.tool
 
-# 5. text-only search
-curl -s -X POST localhost:8000/api/v1/search/text \
-  -H "$AUTH" -H 'Content-Type: application/json' \
-  -d '{"description":"black leather backpack"}' | python3 -m json.tool
+# 5. search the gallery: one camera, one time range, bags only
+curl -s -G localhost:8000/api/v1/found-items -H "$AUTH" \
+  --data-urlencode "camera_id=$CAM" \
+  --data-urlencode "start=2026-10-14T08:00:00Z" --data-urlencode "end=2026-10-14T12:00:00Z" \
+  --data-urlencode "class_name=bag" | python3 -m json.tool
 ```
 
 ---
@@ -247,8 +248,8 @@ pytest                    # unit tests always run; DB-backed tests skip without 
 **Unit** ([test_abandonment.py](tests/test_abandonment.py), [test_utils.py](tests/test_utils.py)) —
 the state machine driven by synthetic detections (owner leaves → event; owner returns → no event;
 owner present but too far → event; object never static → no event; exactly one event per track; ROI
-gating; track expiry; configurable thresholds), plus the geometry, colour and vector helpers. No
-camera, model or database.
+gating; track expiry; configurable thresholds), plus the geometry, colour and crop helpers and the
+match rules. No camera, model or database.
 
 **Auth** ([test_auth.py](tests/test_auth.py)) — password hashing and strength rules, JWT
 create/decode (round trip, expired, tampered, wrong `token_type`), the role ladder, always run
@@ -256,8 +257,8 @@ with no database. `verify_credentials`, `token_version` revocation, and refresh-
 need `app_user`/`refresh_session` and skip themselves the same way integration does.
 
 **Integration** ([test_integration.py](tests/test_integration.py)) — camera CRUD, event recording
-and idempotency, status transitions, and the full pgvector ranking path with hand-crafted
-embeddings, so no YOLO or CLIP weights are needed. They skip themselves unless a database is
+and idempotency, status transitions, the search filters, and rule-based matching (ranking,
+the loss-time cut-off, folding repeat detections), so no YOLO weights are needed. They skip themselves unless a database is
 reachable and the schema is applied:
 
 ```bash
@@ -294,7 +295,17 @@ DB_HOST=127.0.0.1 DB_PORT=5455 pytest
 
 - `FRAME_SKIP` / `TARGET_PROCESS_FPS` set how much video actually reaches YOLO. Abandonment is
   measured in wall-clock seconds, so lowering the rate saves CPU without changing when alerts fire.
-- `OBJECT_CLASS_IDS` defaults to COCO `24, 26, 28` (backpack, handbag, suitcase). Swap in a custom
-  model via `YOLO_MODEL_PATH` and adjust the ids to match its class map.
-- `MATCH_MIN_SIMILARITY` is the cosine floor for a suggestion. Raise it when the gallery grows.
+- The detector is COCO `models/yolo26l.pt` (`YOLO_MODEL_PATH`), watching 24 backpack, 25 umbrella,
+  26 handbag, 28 suitcase and 67 cell phone. `CLASS_NAME_MAP` stores the three bag classes as `bag`
+  and cell phone as `mobile_phone`. The custom `models/lost_found.pt` (0 person, 1 wallet,
+  2 hand_watch, 3 key, 4 Glasses, 5 bag, 6 umbrella, 7 mobile_phone) is kept for when it is
+  retrained; switching back means changing the path, `OBJECT_CLASS_IDS` and `CLASS_NAME_MAP`.
+- `YOLO_TRACKER` points at [trackers/lostfound_bytetrack.yaml](trackers/lostfound_bytetrack.yaml),
+  tuned so small, low-confidence static objects start a track and keep one id at 5 fps.
+  `YOLO_CONFIDENCE` stays at or below its `track_low_thresh`.
+- `STAND_IN_SECONDS`: once the owner has left, a stranger must stay near the object this long to
+  count as minding it, so people walking past do not reset the abandonment timer.
+- `MATCH_CLASS_WEIGHT` / `MATCH_COLOR_WEIGHT` / `MATCH_TIME_WEIGHT` (0.5 / 0.3 / 0.2) weigh a
+  suggestion; `MATCH_WINDOW_HOURS` is how long after the loss a sighting still earns time credit,
+  and `MATCH_MIN_SCORE` hides weaker suggestions.
 - `MODEL_DEVICE` defaults to `cpu` and falls back to CPU automatically if CUDA is unavailable.

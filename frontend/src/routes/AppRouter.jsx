@@ -14,6 +14,8 @@ const CameraForm = lazy(() => import("../pages/cameras/CameraForm"));
 const CameraDetail = lazy(() => import("../pages/cameras/CameraDetail"));
 const Events = lazy(() => import("../pages/Events"));
 const EventDetail = lazy(() => import("../pages/EventDetail"));
+// Its own chunk, so chart.js is only downloaded by someone who opens it.
+const Analytics = lazy(() => import("../pages/Analytics"));
 const LostItems = lazy(() => import("../pages/LostItems"));
 const LostItemDetail = lazy(() => import("../pages/LostItemDetail"));
 const ReportLostItem = lazy(() => import("../pages/ReportLostItem"));
@@ -66,6 +68,8 @@ export function AppRouter({ mode, onToggleMode }) {
               <Route index element={<Events />} />
               <Route path=":eventId" element={<EventDetail />} />
             </Route>
+
+            <Route path="/analytics" element={<Analytics />} />
 
             <Route path="/lost-items">
               <Route index element={<LostItems />} />

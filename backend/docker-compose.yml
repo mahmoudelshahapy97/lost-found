@@ -41,6 +41,14 @@ services:
       - ./logs:/app/logs
     ports:
       - "8000:8000"
+    # YOLO and CLIP run on the GPU (MODEL_DEVICE=cuda in .env).
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   # Republishes a local mp4 as RTSP so the camera path is testable without
   # physical hardware:  docker compose --profile testing up -d mediamtx

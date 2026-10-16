@@ -1,6 +1,7 @@
 # Database
 
-Postgres 17 + [pgvector](https://github.com/pgvector/pgvector). Five tables carry
+Postgres 17 (the compose image is `pgvector/pgvector:pg17`, but no vector
+columns are used any more — search and matching are plain SQL). Five tables carry
 the feature itself: cameras are watched, an abandoned object becomes an **event**,
 the crop from that event becomes a searchable **found item**, a person files a
 **lost item**, and a **match result** ties the last two together.
@@ -21,7 +22,7 @@ first admin is created by the API at startup if `app_user` is empty (see
 
 | Path | Runs when | Contents |
 | --- | --- | --- |
-| `init/001_extensions.sql` | first boot, automatic | `vector`, `pgcrypto` |
+| `init/001_extensions.sql` | first boot, automatic | `pgcrypto` |
 | `init/002_schema.sql` | first boot, automatic | tables, constraints, indexes |
 | `seed/001_seed.sql` | on demand | demo cameras, events, items, matches |
 | `queries/*.sql` | never automatic | reference queries, one file per area |
@@ -67,11 +68,8 @@ It inserts 4 cameras, 6 events across all four statuses, 6 found items, 4 lost
 reports and 2 matches (one confirmed). Every row uses a fixed UUID and every
 insert is `ON CONFLICT DO NOTHING`, so it is safe to run repeatedly.
 
-Two lost reports are planted near a specific found item's vector, so
-`GET /lost-items/{id}/matches` returns a believable ranking without ever running
-CLIP. Those vectors come from `demo_embedding()` / `demo_embedding_near()`, which
-the seed defines, uses, and drops again in the same transaction — nothing is left
-behind in the schema.
+Two lost reports share their object type and colour with a specific found item,
+so `GET /lost-items/{id}/matches` ranks that item first straight away.
 
 ## Resetting
 
@@ -96,11 +94,10 @@ The host port is set by `backend/docker-compose.override.yml`; the default in
 
 ## Notes on the schema
 
-- **`VECTOR(512)`** is the CLIP ViT-B-32 embedding width. Changing
-  `CLIP_MODEL_NAME` changes this dimension, and the column has to change with it.
-- **HNSW over `vector_cosine_ops`** is what keeps candidate lookup off a
-  sequential scan. It is only used when the query orders by the raw `<=>`
-  distance — ordering by `1 - (a <=> b)` silently falls back to a full scan.
+- **`idx_found_camera_time`** (`camera_id, found_at DESC`) serves the search
+  page's main query, one camera over a time range; `idx_found_class_time` covers
+  filtering by object type. Earlier versions stored CLIP/DINOv2 vectors; the api
+  drops those columns from an existing database at startup.
 - **`UNIQUE (camera_id, track_key)`** on `abandoned_event` makes event recording
   idempotent: a worker replaying a track produces no second alert.
 - **`found_item.camera_id`** is `ON DELETE SET NULL` while `event_id` cascades,
