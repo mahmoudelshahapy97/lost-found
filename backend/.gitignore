@@ -6,11 +6,8 @@ venv/
 .env
 logs/
 *.log
-models/*.pth
-models/*.bin
 .ultralytics/
 .pytest_cache/
 .coverage
 htmlcov/
-videos/*.mp4
 data/

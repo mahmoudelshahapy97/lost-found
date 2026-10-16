@@ -136,12 +136,9 @@ models/
 checkpoints/
 runs/
 
-# backend/models is tracked selectively: its README (the model registry) and
-# the weights in use. Anything else dropped there stays ignored.
+# backend/models (the weights plus its README model registry) is tracked in full.
 !backend/models/
-backend/models/*
-!backend/models/README.md
-!backend/models/yolo26l.pt
+!backend/models/**
 
 # =========================
 # Uploads / Generated files
