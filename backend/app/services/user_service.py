@@ -50,6 +50,20 @@ class UserService:
             "SELECT * FROM app_user WHERE email = $1", (email,), fetch_one=True
         )
 
+    async def find_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """Case-insensitive, for what a person types at login and password
+        reset. email is UNIQUE only as stored, so an exact match wins."""
+        email = email.strip()
+        return await self.db_manager.execute_query(
+            """
+            SELECT * FROM app_user WHERE lower(email) = lower($1)
+            ORDER BY (email = $1) DESC, created_at
+            LIMIT 1
+            """,
+            (email,),
+            fetch_one=True,
+        )
+
     async def list_users(self) -> List[Dict[str, Any]]:
         return await self.db_manager.execute_query(
             "SELECT * FROM app_user ORDER BY created_at", (), fetch_all=True
@@ -148,9 +162,15 @@ class UserService:
 
     async def verify_credentials(self, username: str, password: str) -> Optional[Dict[str, Any]]:
         """Returns the user row on success, None on any failure (unknown
-        username, wrong password, deactivated account) -- the caller does not
-        need to distinguish why, only that login failed."""
+        username or email, wrong password, deactivated account) -- the caller
+        does not need to distinguish why, only that login failed.
+
+        `username` may also be the account's email. The username is tried
+        first, so a username that happens to contain "@" still works.
+        """
         user = await self.get_by_username(username)
+        if not user and "@" in username:
+            user = await self.find_by_email(username)
         if not user or not user["is_active"]:
             return None
         if not verify_password(password, user["password_hash"]):

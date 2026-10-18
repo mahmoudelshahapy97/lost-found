@@ -17,7 +17,14 @@ export const client = axios.create({
 // Paths that must never carry a bearer header or trigger a refresh-and-retry:
 // they either predate having a token (login) or are the refresh call itself,
 // and retrying either on a 401 would loop.
-const AUTH_EXEMPT_PATHS = ["/auth/login", "/auth/refresh"];
+const AUTH_EXEMPT_PATHS = [
+  "/auth/login",
+  "/auth/refresh",
+  // Public, used signed out: a stale token must not bounce them to /login.
+  "/auth/options",
+  "/auth/forgot-password",
+  "/auth/reset-password",
+];
 const isAuthExempt = (url = "") => AUTH_EXEMPT_PATHS.some((p) => url.startsWith(p));
 
 client.interceptors.request.use((requestConfig) => {

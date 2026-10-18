@@ -1,10 +1,13 @@
 import { useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link as RouterLink, useLocation, useNavigate } from "react-router-dom";
 import Alert from "@mui/material/Alert";
 import Button from "@mui/material/Button";
+import Link from "@mui/material/Link";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
+import { auth as authApi } from "../api/endpoints";
 import { useAuth } from "../auth/AuthContext";
+import { useAsync } from "../hooks/useAsync";
 
 export function Login() {
   const { login } = useAuth();
@@ -16,6 +19,9 @@ export function Login() {
   const [submitting, setSubmitting] = useState(false);
 
   const from = location.state?.from?.pathname || "/";
+  // The reset link only shows when the API can mail a code (SMTP configured).
+  const options = useAsync(({ signal }) => authApi.options({ signal }), []);
+  const notice = location.state?.notice;
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -33,9 +39,10 @@ export function Login() {
 
   return (
     <Stack component="form" onSubmit={handleSubmit} spacing={2.5}>
+      {notice && !error && <Alert severity="success">{notice}</Alert>}
       {error && <Alert severity="error">{error}</Alert>}
       <TextField
-        label="Username"
+        label="Username or email"
         value={username}
         onChange={(e) => setUsername(e.target.value)}
         autoComplete="username"
@@ -53,6 +60,17 @@ export function Login() {
       <Button type="submit" variant="contained" size="large" disabled={submitting} fullWidth>
         {submitting ? "Signing in…" : "Sign in"}
       </Button>
+      {options.data?.password_reset && (
+        <Link
+          component={RouterLink}
+          to="/forgot-password"
+          state={{ email: username.includes("@") ? username : "" }}
+          variant="body2"
+          sx={{ alignSelf: "center" }}
+        >
+          Forgot your password?
+        </Link>
+      )}
     </Stack>
   );
 }

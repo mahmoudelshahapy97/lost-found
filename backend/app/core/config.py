@@ -71,6 +71,28 @@ class Settings(BaseSettings):
     bootstrap_admin_email: str = "admin@insighteye.local"
     bootstrap_admin_password: str = "ChangeMe!123"
 
+    # "Forgot your password?": a one-time code mailed to the account's email
+    # (app/services/otp_service.py). Off while SMTP_HOST is empty.
+    otp_ttl_seconds: int = 600
+    otp_resend_seconds: int = 60
+    otp_max_attempts: int = 5
+
+    # =========================================================================
+    # EMAIL (SMTP)
+    # =========================================================================
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "Lost & Found <no-reply@insighteye.local>"
+    smtp_starttls: bool = True   # STARTTLS on smtp_port (587)
+    smtp_ssl: bool = False       # implicit TLS instead (465)
+    smtp_timeout_seconds: float = 20.0
+
+    @property
+    def password_reset_enabled(self) -> bool:
+        return bool(self.smtp_host)
+
     # =========================================================================
     # LOGGING
     # =========================================================================

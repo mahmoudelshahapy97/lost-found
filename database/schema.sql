@@ -245,6 +245,20 @@ CREATE TABLE IF NOT EXISTS refresh_session (
 CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_session (user_id)
     WHERE revoked_at IS NULL;
 
+-- ---------------------------------------------------------------------------
+-- password_otp — a "forgot your password?" code mailed to the account
+--
+-- At most one live code per account. Only an HMAC of the code is stored; it
+-- expires after OTP_TTL_SECONDS and dies after OTP_MAX_ATTEMPTS wrong guesses.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS password_otp (
+    user_id       UUID PRIMARY KEY REFERENCES app_user (user_id) ON DELETE CASCADE,
+    otp_hash      TEXT NOT NULL,
+    expires_at    TIMESTAMPTZ NOT NULL,
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    last_sent_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- abandoned_event is created before app_user, so its reference to the
 -- operator who closed it out is added here.
 ALTER TABLE abandoned_event

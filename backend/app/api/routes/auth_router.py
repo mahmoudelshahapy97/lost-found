@@ -1,10 +1,10 @@
 # app/api/routes/auth_router.py
-"""Login, refresh, logout, and the current user's own profile."""
+"""Login, refresh, logout, password reset by emailed code, and the current user's own profile."""
 
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 
 from app.api.deps import get_current_user
 from app.core.config import config
@@ -12,11 +12,14 @@ from app.core.security import validate_password_strength, verify_password
 from app.schemas.auth_schemas import (
     AuthUser,
     ChangePasswordRequest,
+    ForgotPasswordRequest,
     LoginRequest,
     RefreshRequest,
+    ResetPasswordRequest,
     TokenResponse,
 )
 from app.services.auth_service import auth_service
+from app.services.otp_service import otp_service
 from app.services.user_service import user_service
 
 logger = logging.getLogger(__name__)
@@ -49,7 +52,8 @@ async def login(payload: LoginRequest, request: Request, response: Response) -> 
         )
         if not result:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password."
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid username, email or password."
             )
         access_token, refresh_token, user = result
         _set_auth_cookie(response, access_token)
@@ -156,4 +160,78 @@ async def change_password(
         logger.error("Error changing password: %s", e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not change password."
+        )
+
+
+# ----------------------------------------------------------- password reset
+_RESET_SENT = (
+    "If an account uses that email, a reset code is on its way. "
+    "It expires in {minutes} minutes."
+)
+_RESET_REJECTED = HTTPException(
+    status_code=status.HTTP_400_BAD_REQUEST, detail="That code is wrong or has expired."
+)
+
+
+def _require_password_reset() -> None:
+    if not config.password_reset_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password reset by email is not set up. Ask an admin to reset your password.",
+        )
+
+
+@router.get("/options")
+async def auth_options() -> Dict[str, Any]:
+    """What the login page may offer. Public: it reveals no account data."""
+    return {"password_reset": config.password_reset_enabled}
+
+
+@router.post("/forgot-password")
+async def forgot_password(payload: ForgotPasswordRequest, background: BackgroundTasks) -> Dict[str, Any]:
+    """Mail a one-time reset code to the account with this email.
+
+    The answer is the same whether or not the account exists, is deactivated,
+    or already got a code within OTP_RESEND_SECONDS, and the mail goes out
+    after the response, so neither the message nor the timing tells them apart.
+    """
+    _require_password_reset()
+    message = _RESET_SENT.format(minutes=max(1, config.otp_ttl_seconds // 60))
+    try:
+        user = await user_service.find_by_email(payload.email)
+        if user and user["is_active"]:
+            code = await otp_service.issue(user["user_id"])
+            if code:
+                background.add_task(otp_service.send_code, user, code)
+    except Exception as e:
+        logger.error("Error issuing a password reset code: %s", e, exc_info=True)
+    return {"success": True, "message": message}
+
+
+@router.post("/reset-password")
+async def reset_password(payload: ResetPasswordRequest) -> Dict[str, Any]:
+    """Check the emailed code and set the new password in one step.
+
+    Every session of the account is signed out, as on a password change.
+    """
+    _require_password_reset()
+    ok, message = validate_password_strength(payload.new_password)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+    try:
+        user = await user_service.find_by_email(payload.email)
+        if not user or not user["is_active"]:
+            raise _RESET_REJECTED
+        if not await otp_service.consume(user["user_id"], payload.code):
+            raise _RESET_REJECTED
+        await user_service.set_password(user["user_id"], payload.new_password)
+        await auth_service.logout_all(user["user_id"])
+        logger.info("Password reset by emailed code for user %s", user["user_id"])
+        return {"success": True, "message": "Password changed. Log in with the new password."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error resetting a password: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not reset the password."
         )

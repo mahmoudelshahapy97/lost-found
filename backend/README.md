@@ -129,12 +129,20 @@ created by an admin through `POST /users`.
 
 | method | path | purpose |
 |---|---|---|
-| POST | `/auth/login` | `{username, password}` → access + refresh token, sets the image-auth cookie |
+| POST | `/auth/login` | `{username, password}` → access + refresh token, sets the image-auth cookie. `username` may also be the account's email (any case) |
 | POST | `/auth/refresh` | `{refresh_token}` → a new pair; rotates the refresh token |
 | POST | `/auth/logout` | revoke this session |
 | POST | `/auth/logout-all` | revoke every session for the account |
 | GET | `/auth/me` | the calling user |
 | POST | `/auth/change-password` | verifies the current password, then logs the account out everywhere |
+| GET | `/auth/options` | public: `{password_reset}`, whether the login page offers "Forgot your password?" |
+| POST | `/auth/forgot-password` | public: `{email}` → mails a 6-digit code; same answer whether or not the account exists |
+| POST | `/auth/reset-password` | public: `{email, code, new_password}` → checks the code and sets the password in one step, logs out everywhere |
+
+Password reset by email is off until `SMTP_HOST` is set (see `.env.example`); the two public
+routes answer 503 until then. A code expires after `OTP_TTL_SECONDS`, only one can be sent per
+`OTP_RESEND_SECONDS`, and `OTP_MAX_ATTEMPTS` wrong guesses burn it. Only its HMAC is stored, in
+`password_otp`.
 
 Three roles, each a superset of the one before it: `viewer` (read everything),
 `operator` (triage alerts, file reports, confirm matches, start/stop workers), `admin`
@@ -180,17 +188,26 @@ Base prefix `/api/v1`. Every route needs `-H "Authorization: Bearer $TOKEN"` —
 | GET | `/events` | filter by camera, status, class, time range; paginated |
 | GET | `/events/stats` | totals, open count, last 24 h |
 | GET | `/events/{id}/frame` | the annotated alert frame |
-| PATCH | `/events/{id}/status` | acknowledge / resolve / mark false positive |
+| PATCH | `/events/{id}/status` | `{status, action_taken?, description?}`: acknowledge / resolve / mark false positive. Stamps acknowledged/resolved time and who closed it; a false positive discards its unclaimed found item |
 
 ### Lost & found
 | method | path | purpose |
 |---|---|---|
 | POST | `/lost-items` | report a loss (multipart photo and/or description) |
+| PATCH | `/lost-items/{id}` | `{status}`: close a report or reopen it (operator) |
 | GET | `/lost-items/{id}/matches` | rank the found gallery against the report (rule-based) |
 | GET | `/found-items` | the gallery and the search page: filter by `camera_id`, `start`/`end` (ISO time), `class_name`, `color`, `status`; paginated |
+| GET | `/found-items/{id}` | one found item |
+| PATCH | `/found-items/{id}` | `{status}`: discard an item or restore it to unclaimed (operator) |
 | GET | `/found-items/{id}/crop` | the cropped object image |
 | POST | `/matches/confirm` | confirm a pairing: report resolved, item claimed |
 | DELETE | `/matches` | reject a suggested pairing |
+
+### Analytics
+| method | path | purpose |
+|---|---|---|
+| GET | `/analytics/summary` | KPIs, series, heatmap, per-camera / per-class breakdowns and the reunion funnel for a window |
+| GET | `/analytics/confidence-audit` | detector-confidence histogram, low-confidence count, spread per camera and latest scored alerts, each with operator-marked false positives |
 
 ### System
 `GET /health`, `GET /api/v1/system/workers`, `GET /api/v1/system/config` (the tuning values actually

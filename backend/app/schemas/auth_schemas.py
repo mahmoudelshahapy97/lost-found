@@ -7,8 +7,19 @@ from pydantic import BaseModel, Field
 
 
 class LoginRequest(BaseModel):
+    # A username or an email address; the field keeps its name for old clients.
     username: str = Field(..., min_length=1)
     password: str = Field(..., min_length=1)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=254)
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=254)
+    code: str = Field(..., min_length=4, max_length=12)
+    new_password: str = Field(..., min_length=8)
 
 
 class RefreshRequest(BaseModel):

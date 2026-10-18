@@ -8,6 +8,7 @@ import { RequireAuth } from "./RequireAuth";
 // Code-split per route: the dashboard is the landing screen and has no business
 // downloading the report form and the search page before it can paint.
 const Login = lazy(() => import("../pages/Login"));
+const ForgotPassword = lazy(() => import("../pages/ForgotPassword"));
 const Dashboard = lazy(() => import("../pages/Dashboard"));
 const CameraList = lazy(() => import("../pages/cameras/CameraList"));
 const CameraForm = lazy(() => import("../pages/cameras/CameraForm"));
@@ -32,6 +33,7 @@ export function AppRouter({ mode, onToggleMode }) {
         <Routes>
           <Route element={<AuthLayout />}>
             <Route path="/login" element={<Login />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
           </Route>
 
           <Route

@@ -32,6 +32,15 @@ export const auth = {
         new_password: newPassword,
       })
       .then((r) => r.data),
+  /** Public: what the login page may offer, e.g. {password_reset: true}. */
+  options: (opts) => client.get("/auth/options", opts).then((r) => r.data),
+  /** Mails a reset code; the answer is the same whether or not the account exists. */
+  forgotPassword: (email) =>
+    client.post("/auth/forgot-password", { email }).then((r) => r.data),
+  resetPassword: ({ email, code, newPassword }) =>
+    client
+      .post("/auth/reset-password", { email, code, new_password: newPassword })
+      .then((r) => r.data),
 };
 
 // --- users (admin only) ------------------------------------------------------
