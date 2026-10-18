@@ -15,6 +15,8 @@ import Typography from "@mui/material/Typography";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import CheckIcon from "@mui/icons-material/Check";
 import CloseIcon from "@mui/icons-material/Close";
+import LockIcon from "@mui/icons-material/LockOutlined";
+import LockOpenIcon from "@mui/icons-material/LockOpen";
 import SearchIcon from "@mui/icons-material/Search";
 
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -27,7 +29,7 @@ import { errorMessage } from "../api/client";
 import { foundItems, lostItems as lostApi, matches as matchApi } from "../api/endpoints";
 import { useAuth } from "../auth/AuthContext";
 import { useAsync } from "../hooks/useAsync";
-import { DEFAULT_MIN_MATCH_SCORE } from "../utils/constants";
+import { DEFAULT_MIN_MATCH_SCORE, LOST_STATUS } from "../utils/constants";
 import { formatDateTime, formatScore, fromNow, titleCase } from "../utils/format";
 
 function DetailRow({ label, children }) {
@@ -168,6 +170,22 @@ export default function LostItemDetail() {
     }
   };
 
+  const [pendingClose, setPendingClose] = useState(false);
+
+  const setReportStatus = async (status) => {
+    setPendingClose(false);
+    setBusy(true);
+    try {
+      await lostApi.setStatus(lostId, status);
+      toast.success(status === LOST_STATUS.CLOSED ? "Report closed." : "Report reopened.");
+      item.refresh();
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const reject = async (match) => {
     setBusy(true);
     try {
@@ -208,7 +226,28 @@ export default function LostItemDetail() {
           >
             {ranking.loading ? "Searching…" : "Re-run matching"}
           </Button>,
-        ]}
+          canConfirm && report.status === LOST_STATUS.CLOSED ? (
+            <Button
+              key="reopen"
+              onClick={() => setReportStatus(LOST_STATUS.OPEN)}
+              startIcon={<LockOpenIcon />}
+              disabled={busy}
+            >
+              Reopen report
+            </Button>
+          ) : null,
+          canConfirm && [LOST_STATUS.OPEN, LOST_STATUS.MATCHED].includes(report.status) ? (
+            <Button
+              key="close"
+              color="inherit"
+              onClick={() => setPendingClose(true)}
+              startIcon={<LockIcon />}
+              disabled={busy}
+            >
+              Close report
+            </Button>
+          ) : null,
+        ].filter(Boolean)}
       />
 
       <Grid container spacing={2}>
@@ -316,6 +355,15 @@ export default function LostItemDetail() {
         busy={busy}
         onConfirm={confirm}
         onClose={() => setPendingConfirm(null)}
+      />
+      <ConfirmDialog
+        open={pendingClose}
+        title="Close this report?"
+        description="Use this when nobody will follow it up any more. The report keeps its history and can be reopened."
+        confirmLabel="Close report"
+        busy={busy}
+        onConfirm={() => setReportStatus(LOST_STATUS.CLOSED)}
+        onClose={() => setPendingClose(false)}
       />
     </Box>
   );

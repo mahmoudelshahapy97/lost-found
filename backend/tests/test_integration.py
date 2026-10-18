@@ -561,3 +561,32 @@ async def _insert_lost_item(class_name: str = None, color: str = None, lost_afte
     )
     _CREATED.append(("lost_item", "lost_id", row["lost_id"]))
     return row["lost_id"]
+
+
+# ------------------------------------------------------------ status edits
+async def test_found_item_discard_and_restore(camera):
+    found_id = await _insert_found_item(camera["camera_id"], "umbrella", "red")
+
+    assert (await matching_service.set_found_status(found_id, "DISCARDED"))["status"] == "DISCARDED"
+    item = await matching_service.get_found_item(found_id)
+    assert item["status"] == "DISCARDED"
+    assert item["camera_name"] == camera["name"]
+    # A discarded item drops out of matching like a claimed one.
+    lost_id = await _insert_lost_item("umbrella", "red")
+    ranked = await matching_service.find_matches_for_lost_item(lost_id, persist=False)
+    assert found_id not in [m["found_id"] for m in ranked]
+
+    assert (await matching_service.set_found_status(found_id, "UNCLAIMED"))["status"] == "UNCLAIMED"
+    ranked = await matching_service.find_matches_for_lost_item(lost_id, persist=False)
+    assert found_id in [m["found_id"] for m in ranked]
+
+    assert await matching_service.set_found_status(uuid.uuid4(), "DISCARDED") is None
+    assert await matching_service.get_found_item(uuid.uuid4()) is None
+
+
+async def test_lost_report_close_and_reopen(database):
+    lost_id = await _insert_lost_item("bag", "black")
+    assert (await matching_service.set_lost_status(lost_id, "CLOSED"))["status"] == "CLOSED"
+    assert (await matching_service.get_lost_item(lost_id))["status"] == "CLOSED"
+    assert (await matching_service.set_lost_status(lost_id, "OPEN"))["status"] == "OPEN"
+    assert await matching_service.set_lost_status(uuid.uuid4(), "CLOSED") is None

@@ -219,6 +219,14 @@ class MatchingService:
             row["photo_base64"] = bytes_to_base64(photo)
         return row
 
+    async def set_lost_status(self, lost_id: UUID, status: str) -> Optional[Dict[str, Any]]:
+        """Close a report nobody will follow up, or reopen one."""
+        return await self.db_manager.execute_query(
+            "UPDATE lost_item SET status = $2 WHERE lost_id = $1 RETURNING lost_id, status",
+            (lost_id, status),
+            fetch_one=True,
+        )
+
     async def list_lost_items(
         self, status: Optional[str] = None, page: int = 1, per_page: int = 20
     ) -> Dict[str, Any]:
@@ -407,7 +415,6 @@ class MatchingService:
         return bool(rows)
 
     # ----------------------------------------------------------- found items
-    # ----------------------------------------------------------- found items
     async def list_found_items(
         self,
         status: Optional[str] = None,
@@ -459,6 +466,27 @@ class MatchingService:
             "per_page": per_page,
             "found_items": rows,
         }
+
+    async def get_found_item(self, found_id: UUID) -> Optional[Dict[str, Any]]:
+        return await self.db_manager.execute_query(
+            """
+            SELECT f.found_id, f.event_id, f.camera_id, c.name AS camera_name,
+                   f.class_name, f.dominant_color, f.found_at, f.status
+            FROM found_item f
+            LEFT JOIN camera c ON c.camera_id = f.camera_id
+            WHERE f.found_id = $1
+            """,
+            (found_id,),
+            fetch_one=True,
+        )
+
+    async def set_found_status(self, found_id: UUID, status: str) -> Optional[Dict[str, Any]]:
+        """Discard an item (thrown away, handed to the police) or put it back in the gallery."""
+        return await self.db_manager.execute_query(
+            "UPDATE found_item SET status = $2 WHERE found_id = $1 RETURNING found_id, status",
+            (found_id, status),
+            fetch_one=True,
+        )
 
     async def get_found_crop(self, found_id: UUID) -> Optional[bytes]:
         return await media_service.load_image(media_service.FOUND_CROP, found_id)

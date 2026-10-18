@@ -20,6 +20,14 @@ class FoundStatus(str, Enum):
     DISCARDED = "DISCARDED"
 
 
+class LostStatusUpdate(BaseModel):
+    status: LostStatus
+
+
+class FoundStatusUpdate(BaseModel):
+    status: FoundStatus
+
+
 class LostItemResponse(BaseModel):
     lost_id: UUID
     reporter_name: Optional[str] = None

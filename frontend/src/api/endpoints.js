@@ -121,11 +121,19 @@ export const lostItems = {
     if (lostAfter) form.append("lost_after", lostAfter);
     return client.post("/lost-items", form).then((r) => r.data);
   },
+
+  /** OPEN | MATCHED | RESOLVED | CLOSED -- operators close or reopen a report. */
+  setStatus: (id, status) =>
+    client.patch(`/lost-items/${id}`, { status }).then((r) => r.data),
 };
 
 // --- found items ----------------------------------------------------------
 export const foundItems = {
   list: (params, opts) => client.get("/found-items", { params, ...opts }).then((r) => r.data),
+  get: (id, opts) => client.get(`/found-items/${id}`, opts).then((r) => r.data),
+  /** UNCLAIMED | CLAIMED | DISCARDED -- operators discard an item or restore it. */
+  setStatus: (id, status) =>
+    client.patch(`/found-items/${id}`, { status }).then((r) => r.data),
   cropUrl: (id) => mediaUrl(`/found-items/${id}/crop`),
 };
 

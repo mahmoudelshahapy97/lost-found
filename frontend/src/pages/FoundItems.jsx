@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link as RouterLink, useSearchParams } from "react-router-dom";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -20,9 +21,12 @@ import ItemImage from "../components/ItemImage";
 import PageHeader from "../components/PageHeader";
 import { EmptyState, ErrorState, Loading } from "../components/DataStates";
 import { FoundStatusChip } from "../components/StatusChips";
+import { useToast } from "../components/Toast";
+import { errorMessage } from "../api/client";
 import { cameras as cameraApi, foundItems as foundApi } from "../api/endpoints";
+import { useAuth } from "../auth/AuthContext";
 import { useAsync } from "../hooks/useAsync";
-import { FOUND_STATUSES, PAGE_SIZE_OPTIONS } from "../utils/constants";
+import { FOUND_STATUS, FOUND_STATUSES, PAGE_SIZE_OPTIONS } from "../utils/constants";
 import { formatDateTime, fromNow, titleCase } from "../utils/format";
 
 /**
@@ -31,6 +35,10 @@ import { formatDateTime, fromNow, titleCase } from "../utils/format";
  */
 export default function FoundItems() {
   const [params, setParams] = useSearchParams();
+  const toast = useToast();
+  const { hasRole } = useAuth();
+  const canEdit = hasRole("operator");
+  const [busyId, setBusyId] = useState(null);
 
   const status = params.get("status") || "";
   const cameraId = params.get("camera_id") || "";
@@ -58,6 +66,23 @@ export default function FoundItems() {
       ),
     [status, cameraId, page, perPage]
   );
+
+  const changeStatus = async (found, nextStatus) => {
+    setBusyId(found.found_id);
+    try {
+      await foundApi.setStatus(found.found_id, nextStatus);
+      toast.success(
+        nextStatus === FOUND_STATUS.DISCARDED
+          ? `${titleCase(found.class_name)} discarded from the gallery.`
+          : `${titleCase(found.class_name)} restored as unclaimed.`
+      );
+      refresh();
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   const cameraList = useAsync(({ signal }) => cameraApi.list(undefined, { signal }), []);
 
@@ -177,6 +202,27 @@ export default function FoundItems() {
                           component={RouterLink}
                           to={`/events/${found.event_id}`}
                           label="View alert"
+                        />
+                      ) : null}
+                      {canEdit && found.status === FOUND_STATUS.UNCLAIMED ? (
+                        <Chip
+                          size="small"
+                          variant="outlined"
+                          clickable
+                          disabled={busyId === found.found_id}
+                          onClick={() => changeStatus(found, FOUND_STATUS.DISCARDED)}
+                          label="Discard"
+                        />
+                      ) : null}
+                      {canEdit && found.status === FOUND_STATUS.DISCARDED ? (
+                        <Chip
+                          size="small"
+                          variant="outlined"
+                          color="primary"
+                          clickable
+                          disabled={busyId === found.found_id}
+                          onClick={() => changeStatus(found, FOUND_STATUS.UNCLAIMED)}
+                          label="Restore"
                         />
                       ) : null}
                     </Stack>

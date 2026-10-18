@@ -13,7 +13,10 @@ from app.api.deps import get_image_viewer, require_role
 from app.core.config import config
 from app.schemas.lostfound_schemas import (
     FoundItemListResponse,
+    FoundItemResponse,
+    FoundStatusUpdate,
     LostItemListResponse,
+    LostStatusUpdate,
     MatchConfirmRequest,
     MatchListResponse,
 )
@@ -118,6 +121,19 @@ async def get_lost_item(
     return dict(item)
 
 
+@router.patch("/lost-items/{lost_id}")
+async def set_lost_item_status(
+    lost_id: UUID,
+    payload: LostStatusUpdate,
+    current_user: Dict[str, Any] = Depends(require_role("operator")),
+) -> Dict[str, Any]:
+    """Close a report (OPEN / MATCHED / RESOLVED / CLOSED), or reopen it."""
+    updated = await matching_service.set_lost_status(lost_id, payload.status.value)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lost item not found.")
+    return create_response(True, "Lost report updated.", updated)
+
+
 @router.get("/lost-items/{lost_id}/matches", response_model=MatchListResponse)
 async def get_matches(
     lost_id: UUID,
@@ -174,6 +190,30 @@ async def list_found_items(
         page=page,
         per_page=per_page,
     )
+
+
+@router.get("/found-items/{found_id}", response_model=FoundItemResponse)
+async def get_found_item(
+    found_id: UUID,
+    current_user: Dict[str, Any] = Depends(require_role("viewer")),
+) -> Dict[str, Any]:
+    item = await matching_service.get_found_item(found_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Found item not found.")
+    return item
+
+
+@router.patch("/found-items/{found_id}")
+async def set_found_item_status(
+    found_id: UUID,
+    payload: FoundStatusUpdate,
+    current_user: Dict[str, Any] = Depends(require_role("operator")),
+) -> Dict[str, Any]:
+    """Discard an item, restore it to UNCLAIMED, or mark it CLAIMED by hand."""
+    updated = await matching_service.set_found_status(found_id, payload.status.value)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Found item not found.")
+    return create_response(True, "Found item updated.", updated)
 
 
 @router.get(

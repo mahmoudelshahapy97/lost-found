@@ -242,6 +242,7 @@ SELECT COUNT(*) AS total FROM found_item f WHERE f.status = $1;
 SELECT crop_jpeg FROM found_item WHERE found_id = $1;
 
 -- :name mark_found_claimed
+-- PATCH /api/v1/found-items/{found_id} (discard / restore), and match confirmation.
 -- $1 in ('UNCLAIMED', 'CLAIMED', 'DISCARDED')
 UPDATE found_item SET status = $1 WHERE found_id = $2
 RETURNING found_id, status;
@@ -320,6 +321,7 @@ LIMIT $2 OFFSET $3;
 SELECT COUNT(*) AS total FROM lost_item WHERE status = $1;
 
 -- :name update_lost_status
+-- PATCH /api/v1/lost-items/{lost_id} (close / reopen a report).
 -- $1 in ('OPEN', 'MATCHED', 'RESOLVED', 'CLOSED')
 UPDATE lost_item SET status = $1 WHERE lost_id = $2
 RETURNING lost_id, status;
