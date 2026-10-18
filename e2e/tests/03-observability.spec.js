@@ -96,21 +96,36 @@ test("an alert opens to its detail, timeline and triage actions", async ({ page 
   expect(problems, problems.join("\n")).toEqual([]);
 });
 
-test("acknowledging an alert persists and disables the button", async ({ page, request }) => {
+test("acknowledging an alert records the action taken and disables the button", async ({
+  page,
+  request,
+}) => {
   await page.goto(`/events/${SEED.openEventId}`);
 
   const acknowledge = page.getByRole("button", { name: "Acknowledge" });
   await acknowledge.click();
 
+  // Triage asks how the alert was handled before it changes anything.
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("Action taken").fill("E2E: guard sent to check");
+  await dialog.getByLabel("Notes").fill("Recorded by the e2e suite.");
+  await dialog.getByRole("button", { name: "Acknowledge" }).click();
+  await expect(dialog).toBeHidden();
+
   await expect(acknowledge).toBeDisabled({ timeout: 30_000 });
+  await expect(page.getByText("E2E: guard sent to check")).toBeVisible();
 
   const response = await request.get(`/api/v1/events/${SEED.openEventId}?include_frame=false`, {
     headers: authHeaders(),
   });
-  expect((await response.json()).status).toBe("ACKNOWLEDGED");
+  const event = await response.json();
+  expect(event.status).toBe("ACKNOWLEDGED");
+  expect(event.action_taken).toBe("E2E: guard sent to check");
+  expect(event.acknowledged_at).toBeTruthy();
 
   // Put it back, so a re-run starts from the same state the seed describes.
-  await page.getByRole("button", { name: "False positive" }).click();
+  // Straight to OPEN: a false positive would also discard the seeded found item.
   await request.patch(`/api/v1/events/${SEED.openEventId}/status`, {
     headers: authHeaders(),
     data: { status: "OPEN" },

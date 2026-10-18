@@ -87,12 +87,18 @@ state:
 
 | File | What it covers |
 | --- | --- |
-| `00-auth.spec.js` | Login, bad credentials, redirects, role boundaries — runs signed out |
+| `00-auth.spec.js` | Login (by username or email), bad credentials, redirects, role boundaries, forgot password — runs signed out |
 | `01-shell.spec.js` | Health, every route renders, nav, 404, theme toggle |
 | `02-camera-lifecycle.spec.js` | Register a camera through the form, validation, start its worker |
-| `03-observability.spec.js` | Alert list and filters, triage, gallery, system page |
-| `04-lost-and-found.spec.js` | File a report with a photo, ranking, search, confirm a match |
+| `03-observability.spec.js` | Alert list and filters, triage with the action taken, gallery, system page |
+| `04-lost-and-found.spec.js` | File a report with a photo, ranking, search, discard / restore an item, close / reopen a report, confirm a match |
 | `05-teardown.spec.js` | Edit, stop, delete — and check nothing else was taken with it |
+| `07-workspaces.spec.js` | Create a workspace, a camera in it, switch to it, a non-member is shut out, delete it |
+
+The password-reset spec reads the emailed code from a [mailpit](https://mailpit.axllent.org)
+SMTP sink. It runs only when the API has `SMTP_HOST` set to that sink (`SMTP_PORT=1025`,
+`SMTP_STARTTLS=false`) and `MAILPIT_URL` (for example `http://mailpit:8025`) is passed to the
+test container; otherwise it is skipped.
 
 Anything that has to survive between files is re-read from the API
 (`findCamera`), never kept in a module variable: each spec file gets a fresh

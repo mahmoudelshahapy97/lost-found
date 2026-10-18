@@ -300,6 +300,7 @@ export default function Workspaces() {
                         <Tooltip title="Edit">
                           <IconButton
                             size="small"
+                            aria-label="Edit"
                             onClick={() => {
                               setEditing(row);
                               setFormOpen(true);
@@ -312,6 +313,7 @@ export default function Workspaces() {
                           <span>
                             <IconButton
                               size="small"
+                              aria-label="Delete"
                               disabled={row.is_default}
                               onClick={() => setPendingDelete(row)}
                             >

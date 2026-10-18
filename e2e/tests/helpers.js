@@ -171,3 +171,28 @@ export const TINY_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
   "base64"
 );
+
+/**
+ * The plain-text body of the newest mail to `address` in the mailpit SMTP
+ * sink the test stack routes the API's mail to (MAILPIT_URL, e.g.
+ * http://mailpit:8025). Polls, because the API sends after it responds.
+ */
+export async function latestMailTo(request, address, { timeout = 30_000 } = {}) {
+  const base = process.env.MAILPIT_URL;
+  if (!base) throw new Error("MAILPIT_URL is not set");
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const search = await request.get(`${base}/api/v1/search`, {
+      params: { query: `to:"${address}"` },
+    });
+    if (search.ok()) {
+      const { messages = [] } = await search.json();
+      if (messages.length) {
+        const message = await request.get(`${base}/api/v1/message/${messages[0].ID}`);
+        return (await message.json()).Text;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error(`No mail to ${address} within ${timeout}ms`);
+}

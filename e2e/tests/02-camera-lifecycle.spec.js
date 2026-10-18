@@ -112,9 +112,14 @@ test("the detail page shows the configuration that was saved", async ({ page, re
   await expect(page.getByText("Whole frame")).toBeVisible();
 
   // The camera was created enabled, so its worker was started on the spot.
-  // Either way the tracked-objects panel must explain itself rather than
-  // render an empty table that reads as "nothing in view".
-  await expect(page.getByText(/Nothing being tracked|Worker is stopped/)).toBeVisible();
+  // The tracked-objects panel either lists what it tracks (a fast worker on a
+  // GPU is already tracking the sample clip by now) or explains why it is
+  // empty -- never an empty table that reads as "nothing in view".
+  await expect(
+    page
+      .getByText(/Nothing being tracked|Worker is stopped/)
+      .or(page.getByRole("columnheader", { name: "Unattended for" }))
+  ).toBeVisible();
 });
 
 test("the worker can be stopped and started from the detail page", async ({ page, request }) => {

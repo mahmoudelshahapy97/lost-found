@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { ADMIN_CREDENTIALS, OPERATOR_CREDENTIALS, VIEWER_CREDENTIALS } from "./helpers.js";
+import {
+  ADMIN_CREDENTIALS,
+  API,
+  OPERATOR_CREDENTIALS,
+  VIEWER_CREDENTIALS,
+  latestMailTo,
+} from "./helpers.js";
 
 /**
  * Runs signed out, in its own project (see playwright.config.js) -- every
@@ -85,4 +91,68 @@ test("logging out clears the session and protected routes redirect again", async
   await expect(page).toHaveURL(/\/login$/, { timeout: 15_000 });
   await page.goto("/cameras");
   await expect(page).toHaveURL(/\/login$/);
+});
+
+test("an account can sign in with its email address, in any case", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByLabel("Username or email").fill(`${OPERATOR_CREDENTIALS.username}@EXAMPLE.com`);
+  await page.getByLabel("Password").fill(OPERATOR_CREDENTIALS.password);
+  await page.getByRole("button", { name: /sign in/i }).click();
+  await expect(page).toHaveURL(/\/$/, { timeout: 20_000 });
+  await expect(page.getByRole("heading", { name: "Dashboard", level: 5 })).toBeVisible();
+});
+
+test("the forgot-password link shows only when the API can mail a code", async ({ page, request }) => {
+  const options = await (await request.get(`${API}/auth/options`)).json();
+  await page.goto("/login");
+  const link = page.getByRole("link", { name: "Forgot your password?" });
+  if (options.password_reset) await expect(link).toBeVisible();
+  else await expect(link).toHaveCount(0);
+});
+
+test("a forgotten password is reset with the code from the email", async ({ page, request }) => {
+  const options = await (await request.get(`${API}/auth/options`)).json();
+  test.skip(
+    !options.password_reset || !process.env.MAILPIT_URL,
+    "needs SMTP on the API and MAILPIT_URL to read the mail (see e2e/README.md)"
+  );
+
+  // A throwaway account, so the suite's own logins keep their passwords.
+  const login = await request.post(`${API}/auth/login`, { data: ADMIN_CREDENTIALS });
+  const admin = { Authorization: `Bearer ${(await login.json()).access_token}` };
+  const username = `e2e-reset-${Date.now()}`;
+  const email = `${username}@example.com`;
+  const created = await request.post(`${API}/users`, {
+    headers: admin,
+    data: { username, email, password: "E2eBefore!1", role: "viewer" },
+  });
+  expect(created.ok()).toBeTruthy();
+  const userId = (await created.json()).user_id;
+
+  try {
+    await page.goto("/login");
+    await page.getByRole("link", { name: "Forgot your password?" }).click();
+    await expect(page).toHaveURL(/\/forgot-password$/);
+    await page.getByLabel("Email").fill(email);
+    await page.getByRole("button", { name: "Send code" }).click();
+    await expect(page.getByText(/reset code is on its way/)).toBeVisible();
+
+    const mail = await latestMailTo(request, email);
+    const code = mail.match(/code is (\d{6})/)[1];
+
+    await page.getByLabel("Code from the email").fill(code);
+    await page.getByLabel(/^New password/).fill("E2eAfter!22");
+    await page.getByLabel("Repeat new password").fill("E2eAfter!22");
+    await page.getByRole("button", { name: "Set new password" }).click();
+
+    // Back on the login page with the confirmation; the new password works.
+    await expect(page).toHaveURL(/\/login$/, { timeout: 20_000 });
+    await expect(page.getByText(/Password changed/)).toBeVisible();
+    await page.getByLabel("Username or email").fill(email);
+    await page.getByLabel("Password").fill("E2eAfter!22");
+    await page.getByRole("button", { name: /sign in/i }).click();
+    await expect(page).toHaveURL(/\/$/, { timeout: 20_000 });
+  } finally {
+    await request.delete(`${API}/users/${userId}`, { headers: admin });
+  }
 });

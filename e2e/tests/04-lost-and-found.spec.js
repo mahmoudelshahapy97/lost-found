@@ -171,6 +171,51 @@ test("clear filters resets the search", async ({ page }) => {
   await expect(page.getByText(/\d+ items? found/)).toBeVisible();
 });
 
+test("a found item can be discarded from the gallery and restored", async ({ page, request }) => {
+  const foundStatus = async () =>
+    (
+      await (
+        await request.get(`/api/v1/found-items/${SEED.foundBlackBag}`, { headers: authHeaders() })
+      ).json()
+    ).status;
+  test.skip((await foundStatus()) !== "UNCLAIMED", "re-apply database/seed.sql to run this");
+
+  await page.goto("/found-items");
+  const card = page.locator(`[data-found-id="${SEED.foundBlackBag}"]`);
+  await expect(card).toBeVisible({ timeout: 30_000 });
+
+  await card.getByRole("button", { name: "Discard" }).click();
+  await expect(card.getByRole("button", { name: "Restore" })).toBeVisible();
+  await expect.poll(foundStatus).toBe("DISCARDED");
+
+  await card.getByRole("button", { name: "Restore" }).click();
+  await expect(card.getByRole("button", { name: "Discard" })).toBeVisible();
+  await expect.poll(foundStatus).toBe("UNCLAIMED");
+});
+
+test("a lost report can be closed and reopened", async ({ page, request }) => {
+  const listed = await (
+    await request.get("/api/v1/lost-items?per_page=100", { headers: authHeaders() })
+  ).json();
+  const ours = listed.lost_items.find((item) => item.description?.includes(MARKER));
+  test.skip(!ours, "the report from the earlier spec is missing");
+
+  await page.goto(`/lost-items/${ours.lost_id}`);
+  await page.getByRole("button", { name: "Close report" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Close report" }).click();
+
+  await expect(page.getByRole("button", { name: "Reopen report" })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText("Closed", { exact: true }).first()).toBeVisible();
+
+  await page.getByRole("button", { name: "Reopen report" }).click();
+  await expect(page.getByRole("button", { name: "Close report" })).toBeVisible({ timeout: 20_000 });
+  const report = await (
+    await request.get(`/api/v1/lost-items/${ours.lost_id}`, { headers: authHeaders() })
+  ).json();
+  expect(report.status).toBe("OPEN");
+});
+
 test("confirming a match resolves the report and claims the item", async ({ page, request }) => {
   // Confirming is destructive: it claims the item, which removes it from every
   // later search. On a re-run against an unseeded database there is nothing

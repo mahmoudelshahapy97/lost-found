@@ -222,7 +222,7 @@ export default function CameraForm() {
                     value={values.name}
                     onChange={setField("name")}
                     error={Boolean(errors.name)}
-                    helperText={errors.name || "Must be unique across all cameras."}
+                    helperText={errors.name || "Must be unique within this workspace."}
                     required
                     fullWidth
                     autoFocus

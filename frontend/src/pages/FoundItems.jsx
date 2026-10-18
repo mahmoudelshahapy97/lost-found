@@ -151,7 +151,7 @@ export default function FoundItems() {
           <Grid container spacing={2}>
             {items.map((found) => (
               <Grid key={found.found_id} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
-                <Card sx={{ height: "100%" }}>
+                <Card sx={{ height: "100%" }} data-testid="found-card" data-found-id={found.found_id}>
                   <ItemImage
                     src={foundApi.cropUrl(found.found_id)}
                     alt={`Found ${found.class_name}`}
