@@ -80,8 +80,9 @@ export const events = {
   list: (params, opts) => client.get("/events", { params, ...opts }).then((r) => r.data),
   get: (id, params, opts) => client.get(`/events/${id}`, { params, ...opts }).then((r) => r.data),
   stats: (params, opts) => client.get("/events/stats", { params, ...opts }).then((r) => r.data),
-  setStatus: (id, status) =>
-    client.patch(`/events/${id}/status`, { status }).then((r) => r.data),
+  /** notes: optional {action_taken, description}; left out, the stored ones are kept. */
+  setStatus: (id, status, notes = {}) =>
+    client.patch(`/events/${id}/status`, { status, ...notes }).then((r) => r.data),
 
   /** The annotated frame captured when the object was declared abandoned. */
   frameUrl: (id) => mediaUrl(`/events/${id}/frame`),

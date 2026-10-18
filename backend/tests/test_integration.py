@@ -32,6 +32,7 @@ from app.services.camera_service import camera_service
 from app.services.event_service import event_service
 from app.services.matching_service import matching_service
 from app.services.object_store import object_store
+from app.services.user_service import user_service
 
 pytestmark = pytest.mark.asyncio
 
@@ -268,6 +269,57 @@ async def test_event_status_transitions(camera):
     stats = await event_service.stats(camera["camera_id"])
     assert stats["total"] == 1
     assert stats["open"] == 0
+
+
+async def test_resolution_notes_and_timestamps(camera):
+    operator = await user_service.create_user(
+        f"op-{uuid.uuid4().hex[:8]}", f"{uuid.uuid4().hex[:8]}@test.local", "Passw0rd!x", "operator"
+    )
+    _CREATED.append(("app_user", "user_id", operator["user_id"]))
+    found_id = await _insert_found_item(camera["camera_id"], "bag", "black", box=(0, 0, 40, 40))
+    event_id = (await db_manager.execute_query(
+        "SELECT event_id FROM found_item WHERE found_id = $1", (found_id,), fetch_one=True
+    ))["event_id"]
+
+    acked = await event_service.update_status(event_id, "ACKNOWLEDGED", action_taken="Guard sent")
+    assert acked["acknowledged_at"] is not None
+    assert acked["resolved_at"] is None and acked["resolved_by"] is None
+
+    # Empty notes keep the stored ones; closing stamps who and when.
+    done = await event_service.update_status(
+        event_id, "RESOLVED", description="Owner collected it", user_id=operator["user_id"]
+    )
+    assert done["action_taken"] == "Guard sent"
+    assert done["description"] == "Owner collected it"
+    assert done["acknowledged_at"] == acked["acknowledged_at"]
+    assert done["resolved_at"] is not None
+    assert done["resolved_by"] == operator["user_id"]
+
+    event = await event_service.get_event(event_id, include_frame=False)
+    assert event["resolved_by_username"] == operator["username"]
+
+    reopened = await event_service.update_status(event_id, "OPEN")
+    assert reopened["acknowledged_at"] is None and reopened["resolved_at"] is None
+
+
+async def test_false_positive_discards_its_unclaimed_found_item(camera):
+    found_id = await _insert_found_item(camera["camera_id"], "bag", "black", box=(0, 0, 40, 40))
+    other_id = await _insert_found_item(camera["camera_id"], "bag", "black", box=(100, 100, 140, 140))
+    event_id = (await db_manager.execute_query(
+        "SELECT event_id FROM found_item WHERE found_id = $1", (found_id,), fetch_one=True
+    ))["event_id"]
+
+    await event_service.update_status(event_id, "FALSE_POSITIVE")
+
+    statuses = {
+        row["found_id"]: row["status"]
+        for row in await db_manager.execute_query(
+            "SELECT found_id, status FROM found_item WHERE found_id = ANY($1::uuid[])",
+            ([found_id, other_id],),
+            fetch_all=True,
+        )
+    }
+    assert statuses == {found_id: "DISCARDED", other_id: "UNCLAIMED"}
 
 
 # -------------------------------------------------------------------- search

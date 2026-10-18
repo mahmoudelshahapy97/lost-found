@@ -4,10 +4,16 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
+import Dialog from "@mui/material/Dialog";
+import DialogActions from "@mui/material/DialogActions";
+import DialogContent from "@mui/material/DialogContent";
+import DialogContentText from "@mui/material/DialogContentText";
+import DialogTitle from "@mui/material/DialogTitle";
 import Divider from "@mui/material/Divider";
 import Grid from "@mui/material/Grid2";
 import Link from "@mui/material/Link";
 import Stack from "@mui/material/Stack";
+import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
@@ -55,12 +61,78 @@ const TRIAGE = [
   },
 ];
 
+const TRIAGE_HINT = {
+  [EVENT_STATUS.ACKNOWLEDGED]: "Someone is on it. The alert stays in the open work.",
+  [EVENT_STATUS.RESOLVED]: "The item was dealt with: collected, returned or handed in.",
+  [EVENT_STATUS.FALSE_POSITIVE]:
+    "Nothing was left behind. Its unclaimed item is also discarded from the found gallery.",
+};
+
+/** Confirms a triage step and records how the alert was handled. */
+function TriageDialog({ open, status, label, initial, busy, onConfirm, onClose }) {
+  const [actionTaken, setActionTaken] = useState("");
+  const [description, setDescription] = useState("");
+
+  const reset = () => {
+    setActionTaken(initial?.action_taken || "");
+    setDescription(initial?.description || "");
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onClose={busy ? undefined : onClose}
+      maxWidth="sm"
+      fullWidth
+      TransitionProps={{ onEnter: reset }}
+    >
+      <DialogTitle>{label}</DialogTitle>
+      <DialogContent>
+        <DialogContentText sx={{ mb: 2 }}>{TRIAGE_HINT[status]}</DialogContentText>
+        <Stack spacing={2}>
+          <TextField
+            label="Action taken"
+            placeholder="e.g. Bag collected by security, logged as LF-1042"
+            value={actionTaken}
+            onChange={(event) => setActionTaken(event.target.value)}
+            inputProps={{ maxLength: 200 }}
+            fullWidth
+            autoFocus
+          />
+          <TextField
+            label="Notes"
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            inputProps={{ maxLength: 2000 }}
+            multiline
+            minRows={3}
+            fullWidth
+          />
+        </Stack>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button onClick={onClose} disabled={busy} color="inherit">
+          Cancel
+        </Button>
+        <Button
+          variant="contained"
+          disabled={busy}
+          onClick={() => onConfirm({ action_taken: actionTaken.trim(), description: description.trim() })}
+        >
+          {busy ? "Working…" : label}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 export default function EventDetail() {
   const { eventId } = useParams();
   const toast = useToast();
   const { hasRole } = useAuth();
   const canTriage = hasRole("operator");
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState(null); // the TRIAGE step being confirmed
 
   // include_frame=false: the annotated frame is fetched as an image instead, so
   // it streams and caches rather than riding along base64-inflated in the JSON.
@@ -69,11 +141,14 @@ export default function EventDetail() {
     [eventId]
   );
 
-  const setStatus = async (status) => {
+  const setStatus = async (status, notes) => {
     setBusy(true);
     try {
-      await eventApi.setStatus(eventId, status);
+      // Empty fields are left out so the notes already stored are kept.
+      const filled = Object.fromEntries(Object.entries(notes || {}).filter(([, v]) => v));
+      await eventApi.setStatus(eventId, status, filled);
       toast.success(`Alert marked ${titleCase(status).toLowerCase()}.`);
+      setPending(null);
       refresh();
     } catch (err) {
       toast.error(errorMessage(err));
@@ -104,12 +179,22 @@ export default function EventDetail() {
               color={color}
               startIcon={icon}
               disabled={busy || data.status === status}
-              onClick={() => setStatus(status)}
+              onClick={() => setPending({ status, label })}
             >
               {label}
             </Button>
           ))
         }
+      />
+
+      <TriageDialog
+        open={Boolean(pending)}
+        status={pending?.status}
+        label={pending?.label}
+        initial={data}
+        busy={busy}
+        onConfirm={(notes) => setStatus(pending.status, notes)}
+        onClose={() => setPending(null)}
       />
 
       <Grid container spacing={2}>
@@ -223,6 +308,39 @@ export default function EventDetail() {
               </DetailRow>
             </CardContent>
           </Card>
+
+          {data.acknowledged_at || data.action_taken || data.description ? (
+            <Card sx={{ mt: 2 }}>
+              <CardContent>
+                <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1 }}>
+                  Handling
+                </Typography>
+                <Divider />
+                <DetailRow label="Acknowledged">
+                  <Typography variant="body2" color="text.secondary">
+                    {formatDateTime(data.acknowledged_at)}
+                  </Typography>
+                </DetailRow>
+                <DetailRow label="Closed">
+                  <Typography variant="body2" color="text.secondary">
+                    {data.resolved_at
+                      ? `${formatDateTime(data.resolved_at)}${
+                          data.resolved_by_username ? ` by ${data.resolved_by_username}` : ""
+                        }`
+                      : "Still open"}
+                  </Typography>
+                </DetailRow>
+                <DetailRow label="Action taken">
+                  <Typography variant="body2">{data.action_taken || "—"}</Typography>
+                </DetailRow>
+                <DetailRow label="Notes">
+                  <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
+                    {data.description || "—"}
+                  </Typography>
+                </DetailRow>
+              </CardContent>
+            </Card>
+          ) : null}
 
           {data.found_id ? (
             <Card sx={{ mt: 2 }}>

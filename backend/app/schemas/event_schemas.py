@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class EventStatus(str, Enum):
@@ -16,6 +16,9 @@ class EventStatus(str, Enum):
 
 class EventStatusUpdate(BaseModel):
     status: EventStatus
+    # Optional notes on how it was handled; left out, the stored ones are kept.
+    action_taken: Optional[str] = Field(None, max_length=200)
+    description: Optional[str] = Field(None, max_length=2000)
 
 
 class EventResponse(BaseModel):
@@ -30,6 +33,11 @@ class EventResponse(BaseModel):
     first_seen_at: Optional[datetime] = None
     abandoned_at: Optional[datetime] = None
     status: str
+    action_taken: Optional[str] = None
+    description: Optional[str] = None
+    acknowledged_at: Optional[datetime] = None
+    resolved_at: Optional[datetime] = None
+    resolved_by_username: Optional[str] = None
     found_id: Optional[UUID] = None
     dominant_color: Optional[str] = None
     has_clip: bool = False

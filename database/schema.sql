@@ -76,6 +76,12 @@ CREATE TABLE IF NOT EXISTS abandoned_event (
     clip_key        TEXT,                    -- the clip in MinIO: clips/<camera>/<event>.mp4
     status          TEXT NOT NULL DEFAULT 'OPEN'
                     CHECK (status IN ('OPEN', 'ACKNOWLEDGED', 'RESOLVED', 'FALSE_POSITIVE')),
+    -- How the alert was closed out: what the operator did and their notes.
+    action_taken    TEXT,
+    description     TEXT,
+    acknowledged_at TIMESTAMPTZ,            -- first left OPEN
+    resolved_at     TIMESTAMPTZ,            -- RESOLVED or FALSE_POSITIVE
+    resolved_by     UUID,                   -- app_user; FK added after that table
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     -- Makes event recording idempotent: a worker replaying a track cannot
@@ -239,14 +245,23 @@ CREATE TABLE IF NOT EXISTS refresh_session (
 CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_session (user_id)
     WHERE revoked_at IS NULL;
 
+-- abandoned_event is created before app_user, so its reference to the
+-- operator who closed it out is added here.
+ALTER TABLE abandoned_event
+    ADD CONSTRAINT abandoned_event_resolved_by_fkey
+    FOREIGN KEY (resolved_by) REFERENCES app_user (user_id) ON DELETE SET NULL;
+
 COMMIT;
 
 -- ---------------------------------------------------------------------------
 -- Notes
 --
 -- No embeddings are stored. Earlier versions kept CLIP/DINOv2 vectors in
--- found_item and lost_item; the api drops those columns from an existing
--- database at startup (SCHEMA_UPGRADES in app/core/database.py).
+-- found_item and lost_item; database/migrations/001_baseline_upgrades.sql
+-- drops those columns from an existing database.
+--
+-- Every change made here after the first release also goes into a numbered
+-- file in database/migrations/, which the api applies at startup.
 --
 -- Images and videos live in MinIO (the *_key columns). The BYTEA columns and
 -- clip_path are the fallback the api writes when MinIO is unreachable, and

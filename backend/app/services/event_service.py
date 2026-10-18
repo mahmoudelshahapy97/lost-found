@@ -192,11 +192,14 @@ class EventService:
             SELECT e.event_id, e.camera_id, c.name AS camera_name, e.track_key,
                    e.class_name, e.confidence, e.bbox, e.owner_track_id,
                    e.first_seen_at, e.abandoned_at, e.status,
+                   e.action_taken, e.description, e.acknowledged_at, e.resolved_at,
+                   u.username AS resolved_by_username,
                    (e.clip_key IS NOT NULL OR e.clip_path IS NOT NULL) AS has_clip,
                    f.found_id, f.dominant_color{frame_column}
             FROM abandoned_event e
             LEFT JOIN camera c ON c.camera_id = e.camera_id
             LEFT JOIN found_item f ON f.event_id = e.event_id
+            LEFT JOIN app_user u ON u.user_id = e.resolved_by
             {where}
             ORDER BY e.abandoned_at DESC
             LIMIT ${len(params) - 1} OFFSET ${len(params)}
@@ -218,10 +221,12 @@ class EventService:
         row = await self.db_manager.execute_query(
             f"""
             SELECT e.*, (e.clip_key IS NOT NULL OR e.clip_path IS NOT NULL) AS has_clip,
-                   c.name AS camera_name, f.found_id, f.dominant_color
+                   c.name AS camera_name, f.found_id, f.dominant_color,
+                   u.username AS resolved_by_username
             FROM abandoned_event e
             LEFT JOIN camera c ON c.camera_id = e.camera_id
             LEFT JOIN found_item f ON f.event_id = e.event_id
+            LEFT JOIN app_user u ON u.user_id = e.resolved_by
             WHERE e.event_id = $1
             """,
             (event_id,),
@@ -267,16 +272,46 @@ class EventService:
         )
         return (row["clip_key"], row["clip_path"]) if row else (None, None)
 
-    async def update_status(self, event_id: UUID, status: str) -> Optional[Dict[str, Any]]:
+    async def update_status(
+        self,
+        event_id: UUID,
+        status: str,
+        action_taken: Optional[str] = None,
+        description: Optional[str] = None,
+        user_id: Optional[UUID] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Acknowledge, resolve or dismiss an alert, keeping how it was handled.
+
+        Notes left empty keep what was there. Leaving OPEN stamps acknowledged_at
+        once; RESOLVED / FALSE_POSITIVE stamp resolved_at and resolved_by. A false
+        positive also takes its object out of the found gallery, so a lost report
+        is never matched against something that was not there.
+        """
         row = await self.db_manager.execute_query(
             """
-            UPDATE abandoned_event SET status = $1
+            UPDATE abandoned_event
+            SET status          = $1::text,
+                action_taken    = COALESCE($3, action_taken),
+                description     = COALESCE($4, description),
+                acknowledged_at = CASE WHEN $1::text <> 'OPEN'
+                                       THEN COALESCE(acknowledged_at, NOW()) END,
+                resolved_at     = CASE WHEN $1::text IN ('RESOLVED', 'FALSE_POSITIVE')
+                                       THEN COALESCE(resolved_at, NOW()) END,
+                resolved_by     = CASE WHEN $1::text IN ('RESOLVED', 'FALSE_POSITIVE')
+                                       THEN COALESCE($5::uuid, resolved_by) END
             WHERE event_id = $2
-            RETURNING event_id, status
+            RETURNING event_id, status, action_taken, description,
+                      acknowledged_at, resolved_at, resolved_by
             """,
-            (status, event_id),
+            (status, event_id, action_taken, description, user_id),
             fetch_one=True,
         )
+        if row and status == "FALSE_POSITIVE":
+            await self.db_manager.execute_query(
+                "UPDATE found_item SET status = 'DISCARDED' "
+                "WHERE event_id = $1 AND status = 'UNCLAIMED'",
+                (event_id,),
+            )
         return row
 
     async def stats(self, camera_id: Optional[UUID] = None) -> Dict[str, Any]:

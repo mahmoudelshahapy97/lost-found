@@ -138,8 +138,18 @@ async def update_event_status(
     payload: EventStatusUpdate,
     current_user: Dict[str, Any] = Depends(require_role("operator")),
 ) -> Dict[str, Any]:
-    """Acknowledge, resolve, or dismiss an event as a false positive."""
-    updated = await event_service.update_status(event_id, payload.status.value)
+    """Acknowledge, resolve, or dismiss an event as a false positive.
+
+    Optional `action_taken` / `description` record how it was handled. A false
+    positive also discards the event's unclaimed found item.
+    """
+    updated = await event_service.update_status(
+        event_id,
+        payload.status.value,
+        action_taken=(payload.action_taken or "").strip() or None,
+        description=(payload.description or "").strip() or None,
+        user_id=current_user["user_id"],
+    )
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
     return create_response(True, "Event status updated.", updated)

@@ -148,10 +148,24 @@ SELECT frame_jpeg FROM abandoned_event WHERE event_id = $1;
 
 -- :name update_event_status
 -- PATCH /api/v1/events/{event_id}/status
--- $1 in ('OPEN', 'ACKNOWLEDGED', 'RESOLVED', 'FALSE_POSITIVE')
-UPDATE abandoned_event SET status = $1
+-- $1 in ('OPEN', 'ACKNOWLEDGED', 'RESOLVED', 'FALSE_POSITIVE'), $3 action_taken,
+-- $4 description (NULL keeps the stored one), $5 the operator's user_id.
+UPDATE abandoned_event
+SET status          = $1::text,
+    action_taken    = COALESCE($3, action_taken),
+    description     = COALESCE($4, description),
+    acknowledged_at = CASE WHEN $1::text <> 'OPEN' THEN COALESCE(acknowledged_at, NOW()) END,
+    resolved_at     = CASE WHEN $1::text IN ('RESOLVED', 'FALSE_POSITIVE')
+                           THEN COALESCE(resolved_at, NOW()) END,
+    resolved_by     = CASE WHEN $1::text IN ('RESOLVED', 'FALSE_POSITIVE')
+                           THEN COALESCE($5::uuid, resolved_by) END
 WHERE event_id = $2
-RETURNING event_id, status;
+RETURNING event_id, status, action_taken, description, acknowledged_at, resolved_at, resolved_by;
+
+-- :name discard_false_positive_found_item
+-- After update_event_status to FALSE_POSITIVE: the object was never there.
+UPDATE found_item SET status = 'DISCARDED'
+WHERE event_id = $1 AND status = 'UNCLAIMED';
 
 -- :name event_stats
 -- GET /api/v1/events/stats - the dashboard counters.
