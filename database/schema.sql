@@ -24,11 +24,39 @@ BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ---------------------------------------------------------------------------
+-- workspace — a partition of the data: its cameras, their events and found
+-- items, and the lost reports filed in it
+--
+-- Users see the workspaces they are members of (workspace_member, below);
+-- admins see all of them. The account roles stay global. "Default" has a
+-- fixed id so seed data and tools can name it; the api never deletes it.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS workspace (
+    workspace_id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name          TEXT NOT NULL,
+    description   TEXT,
+    is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by    UUID,                     -- app_user; FK added after that table
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_name ON workspace (lower(name));
+
+INSERT INTO workspace (workspace_id, name, description)
+VALUES ('00000000-0000-0000-0000-000000000001', 'Default',
+        'Created with workspaces; holds everything recorded before them.')
+ON CONFLICT DO NOTHING;
+
+-- ---------------------------------------------------------------------------
 -- camera — one watched RTSP source
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS camera (
     camera_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name        TEXT NOT NULL UNIQUE,
+    -- Defaults to Default for hand-written inserts; the api always names it.
+    workspace_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001'
+                REFERENCES workspace (workspace_id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
     -- rtsp:// URL, or a local video file path when exercising the pipeline
     -- without hardware.
     rtsp_url    TEXT NOT NULL,
@@ -46,11 +74,15 @@ CREATE TABLE IF NOT EXISTS camera (
     settings    JSONB NOT NULL DEFAULT '{}'::jsonb,
 
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Names are unique within a workspace.
+    CONSTRAINT camera_workspace_name_key UNIQUE (workspace_id, name)
 );
 
 -- Partial index: startup only ever asks for the enabled rows.
 CREATE INDEX IF NOT EXISTS idx_camera_enabled ON camera (enabled) WHERE enabled;
+CREATE INDEX IF NOT EXISTS idx_camera_workspace ON camera (workspace_id);
 
 -- ---------------------------------------------------------------------------
 -- abandoned_event — one confirmed abandonment
@@ -62,6 +94,8 @@ CREATE INDEX IF NOT EXISTS idx_camera_enabled ON camera (enabled) WHERE enabled;
 CREATE TABLE IF NOT EXISTS abandoned_event (
     event_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     camera_id       UUID NOT NULL REFERENCES camera (camera_id) ON DELETE CASCADE,
+    -- Always the camera's: set by trg_event_workspace when left out.
+    workspace_id    UUID NOT NULL REFERENCES workspace (workspace_id) ON DELETE CASCADE,
     track_key       TEXT NOT NULL,
     class_name      TEXT NOT NULL,
     confidence      REAL,
@@ -93,6 +127,8 @@ CREATE INDEX IF NOT EXISTS idx_event_camera_time
     ON abandoned_event (camera_id, abandoned_at DESC);
 CREATE INDEX IF NOT EXISTS idx_event_status ON abandoned_event (status);
 CREATE INDEX IF NOT EXISTS idx_event_class  ON abandoned_event (class_name);
+CREATE INDEX IF NOT EXISTS idx_event_workspace_time
+    ON abandoned_event (workspace_id, abandoned_at DESC);
 
 -- ---------------------------------------------------------------------------
 -- found_item — the searchable crop harvested from an event
@@ -107,6 +143,9 @@ CREATE TABLE IF NOT EXISTS found_item (
     -- SET NULL rather than CASCADE: deleting a camera must not delete items
     -- that are still waiting to be claimed.
     camera_id       UUID REFERENCES camera (camera_id) ON DELETE SET NULL,
+    -- Its own column, so it outlives the camera: set from the camera (or the
+    -- event) by trg_found_workspace when left out.
+    workspace_id    UUID NOT NULL REFERENCES workspace (workspace_id) ON DELETE CASCADE,
     class_name      TEXT NOT NULL,
     dominant_color  TEXT,
     crop_jpeg       BYTEA,              -- fallback when MinIO is down
@@ -125,6 +164,7 @@ CREATE INDEX IF NOT EXISTS idx_found_status     ON found_item (status);
 CREATE INDEX IF NOT EXISTS idx_found_class_time ON found_item (class_name, found_at DESC);
 -- The search page's main query: one camera's items over a time range.
 CREATE INDEX IF NOT EXISTS idx_found_camera_time ON found_item (camera_id, found_at DESC);
+CREATE INDEX IF NOT EXISTS idx_found_workspace_time ON found_item (workspace_id, found_at DESC);
 
 -- ---------------------------------------------------------------------------
 -- lost_item — what a person reported missing
@@ -135,6 +175,9 @@ CREATE INDEX IF NOT EXISTS idx_found_camera_time ON found_item (camera_id, found
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS lost_item (
     lost_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- The workspace it was filed in; matching only looks at that workspace.
+    workspace_id    UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001'
+                    REFERENCES workspace (workspace_id) ON DELETE CASCADE,
     reporter_name   TEXT,
     reporter_email  TEXT,
     description     TEXT,
@@ -153,6 +196,7 @@ CREATE TABLE IF NOT EXISTS lost_item (
 
 CREATE INDEX IF NOT EXISTS idx_lost_status   ON lost_item (status);
 CREATE INDEX IF NOT EXISTS idx_lost_reported ON lost_item (reported_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lost_workspace_time ON lost_item (workspace_id, reported_at DESC);
 
 -- ---------------------------------------------------------------------------
 -- match_result — one pairing between a lost report and a found item
@@ -258,6 +302,46 @@ CREATE TABLE IF NOT EXISTS password_otp (
     attempts      INTEGER NOT NULL DEFAULT 0,
     last_sent_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ---------------------------------------------------------------------------
+-- workspace_member — who may see a workspace
+--
+-- Admins see every workspace without a row here. A new account joins the
+-- workspaces it is created with, or Default.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS workspace_member (
+    workspace_id  UUID NOT NULL REFERENCES workspace (workspace_id) ON DELETE CASCADE,
+    user_id       UUID NOT NULL REFERENCES app_user (user_id) ON DELETE CASCADE,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (workspace_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_member_user ON workspace_member (user_id);
+
+ALTER TABLE workspace
+    ADD CONSTRAINT workspace_created_by_fkey
+    FOREIGN KEY (created_by) REFERENCES app_user (user_id) ON DELETE SET NULL;
+
+-- Events and found items take their camera's workspace, so the workers never
+-- have to know about workspaces and the two can never disagree.
+CREATE OR REPLACE FUNCTION lf_inherit_workspace() RETURNS trigger AS $$
+BEGIN
+    IF NEW.workspace_id IS NULL THEN
+        SELECT c.workspace_id INTO NEW.workspace_id FROM camera c WHERE c.camera_id = NEW.camera_id;
+    END IF;
+    IF NEW.workspace_id IS NULL AND TG_TABLE_NAME = 'found_item' THEN
+        SELECT e.workspace_id INTO NEW.workspace_id FROM abandoned_event e WHERE e.event_id = NEW.event_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER trg_event_workspace
+    BEFORE INSERT ON abandoned_event
+    FOR EACH ROW EXECUTE FUNCTION lf_inherit_workspace();
+CREATE OR REPLACE TRIGGER trg_found_workspace
+    BEFORE INSERT ON found_item
+    FOR EACH ROW EXECUTE FUNCTION lf_inherit_workspace();
 
 -- abandoned_event is created before app_user, so its reference to the
 -- operator who closed it out is added here.

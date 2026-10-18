@@ -4,6 +4,7 @@ import AppLayout from "../layouts/AppLayout";
 import AuthLayout from "../layouts/AuthLayout";
 import { Loading } from "../components/DataStates";
 import { RequireAuth } from "./RequireAuth";
+import { WorkspaceProvider } from "../workspace/WorkspaceContext";
 
 // Code-split per route: the dashboard is the landing screen and has no business
 // downloading the report form and the search page before it can paint.
@@ -24,6 +25,7 @@ const FoundItems = lazy(() => import("../pages/FoundItems"));
 const Search = lazy(() => import("../pages/Search"));
 const SystemStatus = lazy(() => import("../pages/SystemStatus"));
 const Users = lazy(() => import("../pages/admin/Users"));
+const Workspaces = lazy(() => import("../pages/admin/Workspaces"));
 const NotFound = lazy(() => import("../pages/NotFound"));
 
 export function AppRouter({ mode, onToggleMode }) {
@@ -39,7 +41,9 @@ export function AppRouter({ mode, onToggleMode }) {
           <Route
             element={
               <RequireAuth>
-                <AppLayout mode={mode} onToggleMode={onToggleMode} />
+                <WorkspaceProvider>
+                  <AppLayout mode={mode} onToggleMode={onToggleMode} />
+                </WorkspaceProvider>
               </RequireAuth>
             }
           >
@@ -90,6 +94,15 @@ export function AppRouter({ mode, onToggleMode }) {
             <Route path="/found-items" element={<FoundItems />} />
             <Route path="/search" element={<Search />} />
             <Route path="/system" element={<SystemStatus />} />
+
+            <Route
+              path="/workspaces"
+              element={
+                <RequireAuth minimum="admin">
+                  <Workspaces />
+                </RequireAuth>
+              }
+            />
 
             <Route
               path="/users"

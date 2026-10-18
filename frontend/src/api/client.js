@@ -27,12 +27,21 @@ const AUTH_EXEMPT_PATHS = [
 ];
 const isAuthExempt = (url = "") => AUTH_EXEMPT_PATHS.some((p) => url.startsWith(p));
 
+/** The active workspace, sent as X-Workspace-Id on every authenticated call.
+ * Set by workspace/WorkspaceContext.jsx; the API falls back to the caller's
+ * first workspace when it is missing. */
+let workspaceId = null;
+export function setWorkspaceId(id) {
+  workspaceId = id ?? null;
+}
+
 client.interceptors.request.use((requestConfig) => {
   if (!isAuthExempt(requestConfig.url)) {
     const token = getAccessToken();
     if (token) {
       requestConfig.headers = requestConfig.headers || {};
       requestConfig.headers.Authorization = `Bearer ${token}`;
+      if (workspaceId) requestConfig.headers["X-Workspace-Id"] = workspaceId;
     }
   }
   return requestConfig;

@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import FormControl from "@mui/material/FormControl";
+import FormHelperText from "@mui/material/FormHelperText";
 import InputLabel from "@mui/material/InputLabel";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
@@ -16,8 +18,9 @@ import { errorMessage } from "../../api/client";
 import { users as usersApi } from "../../api/endpoints";
 import { ROLES } from "../../auth/roles";
 import { useToast } from "../../components/Toast";
+import { useWorkspace } from "../../workspace/WorkspaceContext";
 
-const EMPTY = { username: "", email: "", full_name: "", password: "", role: "viewer" };
+const EMPTY = { username: "", email: "", full_name: "", password: "", role: "viewer", workspace_ids: [] };
 
 /**
  * One dialog for both create and edit. `editingUser` null means "new
@@ -26,6 +29,8 @@ const EMPTY = { username: "", email: "", full_name: "", password: "", role: "vie
  */
 export function UserForm({ open, editingUser, onClose, onSaved }) {
   const toast = useToast();
+  // An admin's switcher list is every workspace.
+  const { workspaces } = useWorkspace();
   const [form, setForm] = useState(EMPTY);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -41,10 +46,14 @@ export function UserForm({ open, editingUser, onClose, onSaved }) {
             full_name: editingUser.full_name || "",
             password: "",
             role: editingUser.role,
+            workspace_ids: (editingUser.workspaces || []).map((w) => w.workspace_id),
           }
-        : EMPTY
+        : {
+            ...EMPTY,
+            workspace_ids: workspaces.filter((w) => w.is_default).map((w) => w.workspace_id),
+          }
     );
-  }, [open, editingUser]);
+  }, [open, editingUser, workspaces]);
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
@@ -56,6 +65,7 @@ export function UserForm({ open, editingUser, onClose, onSaved }) {
         await usersApi.update(editingUser.user_id, {
           full_name: form.full_name || null,
           role: form.role,
+          workspace_ids: form.workspace_ids,
         });
         toast.success(`Updated "${form.username}".`);
       } else {
@@ -65,6 +75,7 @@ export function UserForm({ open, editingUser, onClose, onSaved }) {
           password: form.password,
           full_name: form.full_name || null,
           role: form.role,
+          workspace_ids: form.workspace_ids,
         });
         toast.success(`Created "${form.username}".`);
       }
@@ -131,6 +142,38 @@ export function UserForm({ open, editingUser, onClose, onSaved }) {
                 </MenuItem>
               ))}
             </Select>
+          </FormControl>
+          <FormControl fullWidth>
+            <InputLabel id="user-workspaces-label">Workspaces</InputLabel>
+            <Select
+              labelId="user-workspaces-label"
+              label="Workspaces"
+              multiple
+              value={form.workspace_ids}
+              onChange={(e) => setForm((f) => ({ ...f, workspace_ids: e.target.value }))}
+              renderValue={(selected) => (
+                <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                  {selected.map((id) => (
+                    <Chip
+                      key={id}
+                      size="small"
+                      label={workspaces.find((w) => w.workspace_id === id)?.name || "…"}
+                    />
+                  ))}
+                </Stack>
+              )}
+            >
+              {workspaces.map((workspace) => (
+                <MenuItem key={workspace.workspace_id} value={workspace.workspace_id}>
+                  {workspace.name}
+                </MenuItem>
+              ))}
+            </Select>
+            <FormHelperText>
+              {form.role === "admin"
+                ? "Admins see every workspace whatever is chosen here."
+                : "The account only sees these workspaces' cameras, alerts and items."}
+            </FormHelperText>
           </FormControl>
         </Stack>
       </DialogContent>

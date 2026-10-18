@@ -13,7 +13,24 @@
 -- Sections:
 --   1. cameras       2. events        3. found items
 --   4. lost items    5. matching      6. analytics and operations
+--
+-- Workspaces: the api adds "AND <table>.workspace_id = $n" to every list and
+-- aggregate below for the caller's active workspace (X-Workspace-Id), and
+-- answers 404 for a row by id whose workspace_id is another one. The blocks
+-- here leave that filter out for readability.
 -- ---------------------------------------------------------------------------
+
+-- :name workspace_owner_of
+-- app/services/workspace_service.py:owner_of - the check behind every by-id route.
+SELECT workspace_id FROM abandoned_event WHERE event_id = $1;
+
+-- :name workspaces_for_member
+-- GET /api/v1/workspaces/mine for a non-admin: active workspaces they belong to, Default first.
+SELECT w.workspace_id, w.name
+FROM workspace w
+JOIN workspace_member m ON m.workspace_id = w.workspace_id AND m.user_id = $1
+WHERE w.is_active
+ORDER BY (w.workspace_id = '00000000-0000-0000-0000-000000000001') DESC, lower(w.name);
 
 -- ==========================================================================
 -- 1. CAMERAS

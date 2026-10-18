@@ -150,6 +150,32 @@ Three roles, each a superset of the one before it: `viewer` (read everything),
 `app/api/deps.py` and applied per-router — see the guards on `camera_router.py`,
 `event_router.py`, `lostfound_router.py` and `system_router.py`.
 
+### Workspaces
+
+Data is partitioned into workspaces, as in InsightEye. A camera belongs to one, and its alerts and
+found items follow it. A lost report is filed in one, and only matches that workspace's gallery.
+Members see the workspaces they are in; admins see every workspace. The three roles above are
+account-wide, so an operator is an operator in each of their workspaces.
+
+- **Choosing a workspace.** Every data route works in the workspace named by the
+  `X-Workspace-Id` header. Without it, the caller's first workspace is used (Default for
+  admins), so scripts written before workspaces keep working.
+- **Hidden workspaces.** A workspace the caller cannot see, or a camera, alert, item or report
+  in another workspace, answers **404**, the same as a missing one.
+- **Media routes.** Cookie-authenticated images and clips cannot send the header, so they are
+  checked against the workspace of the image itself.
+
+| method | path | purpose |
+|---|---|---|
+| GET | `/workspaces/mine` | the caller's workspaces (all of them for admins), Default first |
+| GET · POST | `/workspaces` | admin: list, or create `{name, description?, member_ids?}` |
+| GET · PATCH · DELETE | `/workspaces/{id}` | admin: read, edit `{name?, description?, is_active?, member_ids?}`, delete. Delete cascades to cameras, alerts, items and reports and stops their workers. Default cannot be deleted or deactivated |
+| GET · POST | `/workspaces/{id}/members` | admin: list, add `{user_id}` |
+| DELETE | `/workspaces/{id}/members/{user_id}` | admin: remove a member |
+
+`POST /users` and `PATCH /users/{id}` take `workspace_ids`. A new account with none joins
+Default. User responses list each account's `workspaces`.
+
 The three `image/jpeg` routes (`/cameras/{id}/snapshot`, `/events/{id}/frame`,
 `/found-items/{id}/crop`) also accept the httpOnly cookie `/auth/login` sets, since a
 plain `<img src>` cannot attach an `Authorization` header. No other route accepts the

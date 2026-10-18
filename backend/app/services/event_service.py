@@ -158,6 +158,7 @@ class EventService:
         include_frame: bool = False,
         page: int = 1,
         per_page: int = 20,
+        workspace_id: Optional[UUID] = None,
     ) -> Dict[str, Any]:
         conditions: List[str] = []
         params: List[Any] = []
@@ -166,6 +167,8 @@ class EventService:
             params.append(value)
             conditions.append(condition.format(n=len(params)))
 
+        if workspace_id:
+            add("e.workspace_id = ${n}", workspace_id)
         if camera_id:
             add("e.camera_id = ${n}", camera_id)
         if status:
@@ -314,9 +317,16 @@ class EventService:
             )
         return row
 
-    async def stats(self, camera_id: Optional[UUID] = None) -> Dict[str, Any]:
-        where = "WHERE camera_id = $1" if camera_id else ""
-        params: Sequence[Any] = (camera_id,) if camera_id else ()
+    async def stats(
+        self, camera_id: Optional[UUID] = None, workspace_id: Optional[UUID] = None
+    ) -> Dict[str, Any]:
+        conditions: List[str] = []
+        params: List[Any] = []
+        for column, value in (("workspace_id", workspace_id), ("camera_id", camera_id)):
+            if value:
+                params.append(value)
+                conditions.append(f"{column} = ${len(params)}")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         row = await self.db_manager.execute_query(
             f"""
             SELECT COUNT(*) AS total,
@@ -325,7 +335,7 @@ class EventService:
                    MAX(abandoned_at) AS last_event_at
             FROM abandoned_event {where}
             """,
-            params,
+            tuple(params),
             fetch_one=True,
         )
         return row or {}

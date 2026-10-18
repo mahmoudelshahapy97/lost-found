@@ -43,6 +43,18 @@ export const auth = {
       .then((r) => r.data),
 };
 
+// --- workspaces -------------------------------------------------------------
+export const workspaces = {
+  /** The caller's workspaces (all of them for admins), Default first. */
+  mine: (opts) => client.get("/workspaces/mine", opts).then((r) => r.data),
+  // Admin only from here.
+  list: (opts) => client.get("/workspaces", opts).then((r) => r.data),
+  create: (payload) => client.post("/workspaces", payload).then((r) => r.data),
+  update: (id, payload) => client.patch(`/workspaces/${id}`, payload).then((r) => r.data),
+  remove: (id) => client.delete(`/workspaces/${id}`).then((r) => r.data),
+  members: (id, opts) => client.get(`/workspaces/${id}/members`, opts).then((r) => r.data),
+};
+
 // --- users (admin only) ------------------------------------------------------
 export const users = {
   list: (opts) => client.get("/users", opts).then((r) => r.data),

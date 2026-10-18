@@ -23,10 +23,13 @@ class CameraService:
         enabled: bool = True,
         roi: Optional[List[List[float]]] = None,
         settings: Optional[Dict[str, Any]] = None,
+        workspace_id: Optional[UUID] = None,
     ) -> Dict[str, Any]:
+        # No workspace given (tools, tests): the column default, Default.
         query = """
-            INSERT INTO camera (name, rtsp_url, location, enabled, roi, settings)
-            VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
+            INSERT INTO camera (name, rtsp_url, location, enabled, roi, settings, workspace_id)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb,
+                    COALESCE($7, '00000000-0000-0000-0000-000000000001'::uuid))
             RETURNING *
         """
         return await self.db_manager.execute_query(
@@ -38,6 +41,7 @@ class CameraService:
                 enabled,
                 json.dumps(roi) if roi else None,
                 json.dumps(settings or {}),
+                workspace_id,
             ),
             fetch_one=True,
         )
@@ -47,17 +51,30 @@ class CameraService:
             "SELECT * FROM camera WHERE camera_id = $1", (camera_id,), fetch_one=True
         )
 
-    async def get_camera_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    async def get_camera_by_name(
+        self, name: str, workspace_id: Optional[UUID] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Names are unique per workspace; without one, Default."""
         return await self.db_manager.execute_query(
-            "SELECT * FROM camera WHERE name = $1", (name,), fetch_one=True
+            "SELECT * FROM camera WHERE name = $1 "
+            "AND workspace_id = COALESCE($2, '00000000-0000-0000-0000-000000000001'::uuid)",
+            (name, workspace_id),
+            fetch_one=True,
         )
 
-    async def list_cameras(self, enabled_only: bool = False) -> List[Dict[str, Any]]:
-        if enabled_only:
-            query = "SELECT * FROM camera WHERE enabled ORDER BY created_at"
-        else:
-            query = "SELECT * FROM camera ORDER BY created_at"
-        return await self.db_manager.execute_query(query, (), fetch_all=True)
+    async def list_cameras(
+        self, enabled_only: bool = False, workspace_id: Optional[UUID] = None
+    ) -> List[Dict[str, Any]]:
+        """One workspace's cameras, or every camera (the stream manager) without one."""
+        conditions = ["enabled"] if enabled_only else []
+        params: List[Any] = []
+        if workspace_id is not None:
+            params.append(workspace_id)
+            conditions.append(f"workspace_id = ${len(params)}")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        return await self.db_manager.execute_query(
+            f"SELECT * FROM camera {where} ORDER BY created_at", tuple(params), fetch_all=True
+        )
 
     async def update_camera(self, camera_id: UUID, **fields: Any) -> Optional[Dict[str, Any]]:
         """Patch the supplied columns only; unknown keys are ignored."""

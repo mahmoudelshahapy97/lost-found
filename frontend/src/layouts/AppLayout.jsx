@@ -27,6 +27,7 @@ import Inventory2Icon from "@mui/icons-material/Inventory2";
 import ImageSearchIcon from "@mui/icons-material/ImageSearch";
 import TuneIcon from "@mui/icons-material/Tune";
 import GroupIcon from "@mui/icons-material/Group";
+import WorkspacesIcon from "@mui/icons-material/Workspaces";
 import MenuIcon from "@mui/icons-material/Menu";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
 import LightModeIcon from "@mui/icons-material/LightMode";
@@ -36,6 +37,9 @@ import { health } from "../api/endpoints";
 import { usePolling } from "../hooks/usePolling";
 import { useAuth } from "../auth/AuthContext";
 import UserMenu from "../components/UserMenu";
+import WorkspaceSwitcher from "../components/WorkspaceSwitcher";
+import { EmptyState, ErrorState, Loading } from "../components/DataStates";
+import { useWorkspace } from "../workspace/WorkspaceContext";
 
 const DRAWER_WIDTH = 248;
 
@@ -70,6 +74,7 @@ const NAV_SECTIONS = [
     heading: "System",
     items: [
       { to: "/system", label: "Workers & config", icon: <TuneIcon />, minimum: "viewer" },
+      { to: "/workspaces", label: "Workspaces", icon: <WorkspacesIcon />, minimum: "admin" },
       { to: "/users", label: "Users", icon: <GroupIcon />, minimum: "admin" },
     ],
   },
@@ -121,6 +126,7 @@ export function AppLayout({ mode, onToggleMode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
   const { hasRole } = useAuth();
+  const workspace = useWorkspace();
 
   const visibleSections = NAV_SECTIONS.map((section) => ({
     ...section,
@@ -247,6 +253,7 @@ export function AppLayout({ mode, onToggleMode }) {
             {currentTitle}
           </Typography>
           <Stack direction="row" spacing={1.5} alignItems="center">
+            <WorkspaceSwitcher />
             <BackendStatus />
             <Tooltip title={mode === "dark" ? "Switch to light" : "Switch to dark"}>
               <IconButton onClick={onToggleMode} aria-label="Toggle colour mode">
@@ -293,7 +300,20 @@ export function AppLayout({ mode, onToggleMode }) {
       >
         <Toolbar />
         <Box sx={{ pt: 3 }}>
-          <Outlet />
+          {!workspace.ready ? (
+            <Loading label="Loading workspaces…" />
+          ) : workspace.active ? (
+            // Keyed on the workspace, so switching reloads the open page.
+            <Outlet key={workspace.active.workspace_id} />
+          ) : workspace.error ? (
+            <ErrorState error={workspace.error} onRetry={workspace.reload} />
+          ) : (
+            <EmptyState
+              title="You are not in any workspace yet"
+              description="Everything here belongs to a workspace. Ask an admin to add your account to one."
+              icon={<WorkspacesIcon fontSize="inherit" />}
+            />
+          )}
         </Box>
       </Box>
     </Box>

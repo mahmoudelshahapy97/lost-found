@@ -65,17 +65,35 @@ class AnalyticsService:
             raise ValueError(f"Unknown timezone: {tz}") from e
         return {"bucket": bucket, "step": step, **row}
 
+    @staticmethod
+    def _scope(
+        start_at: Any, workspace_id: Optional[UUID], camera_id: Optional[UUID]
+    ) -> Tuple[Tuple[Any, ...], str, str]:
+        """(params, event filter, found-item filter) shared by every query.
+
+        $1 is the window start, $2 the workspace (NULL = all of them), $3 the
+        camera when one is given.
+        """
+        base: Tuple[Any, ...] = (start_at, workspace_id) + ((camera_id,) if camera_id else ())
+        workspace = "($2::uuid IS NULL OR {a}.workspace_id = $2)"
+        event_where = "e.abandoned_at >= $1 AND " + workspace.format(a="e") + (
+            " AND e.camera_id = $3" if camera_id else ""
+        )
+        found_scope = " AND " + workspace.format(a="f") + (" AND f.camera_id = $3" if camera_id else "")
+        return base, event_where, found_scope
+
     async def summary(
-        self, days: int = 7, camera_id: Optional[UUID] = None, tz: str = "UTC"
+        self,
+        days: int = 7,
+        camera_id: Optional[UUID] = None,
+        tz: str = "UTC",
+        workspace_id: Optional[UUID] = None,
     ) -> Dict[str, Any]:
         window = await self._window(days, tz)
         start_at = window["start_at"]
 
-        # $1 is always the window start, $2 the camera when one is given.
-        base: Tuple[Any, ...] = (start_at, camera_id) if camera_id else (start_at,)
+        base, event_where, found_camera = self._scope(start_at, workspace_id, camera_id)
         n = len(base)
-        event_where = "e.abandoned_at >= $1" + (" AND e.camera_id = $2" if camera_id else "")
-        found_camera = " AND f.camera_id = $2" if camera_id else ""
 
         totals = await self.db_manager.execute_query(
             f"""
@@ -99,8 +117,9 @@ class AnalyticsService:
 
         # lost_item has no camera: a report describes an object, not a place.
         lost = await self.db_manager.execute_query(
-            "SELECT COUNT(*) AS total FROM lost_item WHERE reported_at >= $1",
-            (start_at,),
+            "SELECT COUNT(*) AS total FROM lost_item "
+            "WHERE reported_at >= $1 AND ($2::uuid IS NULL OR workspace_id = $2)",
+            (start_at, workspace_id),
             fetch_one=True,
         )
 
@@ -242,7 +261,11 @@ class AnalyticsService:
         }
 
     async def confidence_audit(
-        self, days: int = 7, camera_id: Optional[UUID] = None, tz: str = "UTC"
+        self,
+        days: int = 7,
+        camera_id: Optional[UUID] = None,
+        tz: str = "UTC",
+        workspace_id: Optional[UUID] = None,
     ) -> Dict[str, Any]:
         """Model accuracy & confidence audit (InsightEye evidence_analytics.confidence_audit).
 
@@ -257,9 +280,8 @@ class AnalyticsService:
         threshold = float(config.yolo_confidence)
         low_cutoff = round(min(1.0, threshold + 0.1), 4)
 
-        base: Tuple[Any, ...] = (start_at, camera_id) if camera_id else (start_at,)
+        base, where, _ = self._scope(start_at, workspace_id, camera_id)
         n = len(base)
-        where = "e.abandoned_at >= $1" + (" AND e.camera_id = $2" if camera_id else "")
         scored = f"{where} AND e.confidence IS NOT NULL"
         low = f"${n + 1}"
 

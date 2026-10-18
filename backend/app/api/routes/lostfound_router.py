@@ -9,7 +9,13 @@ from uuid import UUID
 import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 
-from app.api.deps import get_image_viewer, require_role
+from app.api.deps import (
+    ensure_in_workspace,
+    ensure_visible_resource,
+    get_image_viewer,
+    get_workspace_id,
+    require_role,
+)
 from app.core.config import config
 from app.schemas.lostfound_schemas import (
     FoundItemListResponse,
@@ -26,6 +32,9 @@ from app.utils.response import create_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["lost-and-found"])
+
+_LOST_NOT_FOUND = "Lost item not found."
+_FOUND_NOT_FOUND = "Found item not found."
 
 _ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/bmp"}
 
@@ -65,8 +74,9 @@ async def report_lost_item(
         None, description="Only consider items found after this time"
     ),
     current_user: Dict[str, Any] = Depends(require_role("operator")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
-    """Report a lost item with a photo, a description, or both.
+    """Report a lost item, in the active workspace, with a photo, a description, or both.
 
     Matching uses the object type, the colour (read from the photo, or a colour
     word in the description) and ``lost_after``; the photo is kept for staff.
@@ -86,6 +96,7 @@ async def report_lost_item(
             reporter_email=reporter_email,
             class_name=class_name,
             lost_after=lost_after,
+            workspace_id=workspace_id,
         )
         return create_response(True, "Lost item reported.", dict(lost_item))
     except HTTPException:
@@ -103,9 +114,10 @@ async def list_lost_items(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     current_user: Dict[str, Any] = Depends(require_role("viewer")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
     return await matching_service.list_lost_items(
-        status=status_filter, page=page, per_page=per_page
+        status=status_filter, page=page, per_page=per_page, workspace_id=workspace_id
     )
 
 
@@ -114,7 +126,9 @@ async def get_lost_item(
     lost_id: UUID,
     include_photo: bool = Query(False),
     current_user: Dict[str, Any] = Depends(require_role("viewer")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
+    await ensure_in_workspace("lost", lost_id, workspace_id, _LOST_NOT_FOUND)
     item = await matching_service.get_lost_item(lost_id, include_photo=include_photo)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lost item not found.")
@@ -126,8 +140,10 @@ async def set_lost_item_status(
     lost_id: UUID,
     payload: LostStatusUpdate,
     current_user: Dict[str, Any] = Depends(require_role("operator")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
     """Close a report (OPEN / MATCHED / RESOLVED / CLOSED), or reopen it."""
+    await ensure_in_workspace("lost", lost_id, workspace_id, _LOST_NOT_FOUND)
     updated = await matching_service.set_lost_status(lost_id, payload.status.value)
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lost item not found.")
@@ -141,13 +157,11 @@ async def get_matches(
     min_score: Optional[float] = Query(None, ge=0.0, le=1.0),
     persist: bool = Query(True, description="Store the shortlist for later review"),
     current_user: Dict[str, Any] = Depends(require_role("viewer")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
-    """Rank unclaimed found items against this lost report."""
+    """Rank the workspace's unclaimed found items against this lost report."""
     try:
-        if not await matching_service.get_lost_item(lost_id):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Lost item not found."
-            )
+        await ensure_in_workspace("lost", lost_id, workspace_id, _LOST_NOT_FOUND)
 
         matches = await matching_service.find_matches_for_lost_item(
             lost_id, top_k=top_k, min_score=min_score, persist=persist
@@ -174,6 +188,7 @@ async def list_found_items(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     current_user: Dict[str, Any] = Depends(require_role("viewer")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
     """The found gallery and the search page: filter by camera, time, type, colour, status."""
     if start and end and start > end:
@@ -189,6 +204,7 @@ async def list_found_items(
         end=end,
         page=page,
         per_page=per_page,
+        workspace_id=workspace_id,
     )
 
 
@@ -196,7 +212,9 @@ async def list_found_items(
 async def get_found_item(
     found_id: UUID,
     current_user: Dict[str, Any] = Depends(require_role("viewer")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
+    await ensure_in_workspace("found", found_id, workspace_id, _FOUND_NOT_FOUND)
     item = await matching_service.get_found_item(found_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Found item not found.")
@@ -208,8 +226,10 @@ async def set_found_item_status(
     found_id: UUID,
     payload: FoundStatusUpdate,
     current_user: Dict[str, Any] = Depends(require_role("operator")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
     """Discard an item, restore it to UNCLAIMED, or mark it CLAIMED by hand."""
+    await ensure_in_workspace("found", found_id, workspace_id, _FOUND_NOT_FOUND)
     updated = await matching_service.set_found_status(found_id, payload.status.value)
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Found item not found.")
@@ -223,6 +243,7 @@ async def set_found_item_status(
 async def get_found_crop(
     found_id: UUID, current_user: Dict[str, Any] = Depends(get_image_viewer)
 ) -> Response:
+    await ensure_visible_resource(current_user, "found", found_id)
     jpeg = await matching_service.get_found_crop(found_id)
     if not jpeg:
         raise HTTPException(
@@ -236,8 +257,12 @@ async def get_found_crop(
 async def confirm_match(
     payload: MatchConfirmRequest,
     current_user: Dict[str, Any] = Depends(require_role("operator")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
-    """Confirm a pairing: the lost report is resolved and the found item is claimed."""
+    """Confirm a pairing: the lost report is resolved and the found item is claimed.
+    Both must be in the active workspace."""
+    await ensure_in_workspace("lost", payload.lost_id, workspace_id, _LOST_NOT_FOUND)
+    await ensure_in_workspace("found", payload.found_id, workspace_id, _FOUND_NOT_FOUND)
     try:
         match = await matching_service.confirm_match(
             payload.lost_id, payload.found_id, payload.score
@@ -255,8 +280,10 @@ async def reject_match(
     lost_id: UUID = Query(...),
     found_id: UUID = Query(...),
     current_user: Dict[str, Any] = Depends(require_role("operator")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
     """Remove a suggested pairing so it stops resurfacing."""
+    await ensure_in_workspace("lost", lost_id, workspace_id, _LOST_NOT_FOUND)
     removed = await matching_service.reject_match(lost_id, found_id)
     if not removed:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Match not found.")

@@ -78,6 +78,21 @@ docker compose exec api python -m app.core.migrations          # apply now, with
 | File | Change |
 | --- | --- |
 | `001_baseline_upgrades.sql` | the old in-code `SCHEMA_UPGRADES` (MinIO keys, phash, dropped embeddings) |
+| `002_event_resolution.sql` | `abandoned_event`: action_taken, description, acknowledged_at, resolved_at, resolved_by |
+| `003_password_otp.sql` | `password_otp`: emailed password-reset codes (HMAC only) |
+| `004_workspaces.sql` | `workspace`, `workspace_member`; `workspace_id` on camera, event, found and lost rows; everything existing goes to **Default** |
+
+## Workspaces
+
+Each camera belongs to a workspace, and its events and found items follow it: the triggers
+`trg_event_workspace` and `trg_found_workspace` copy the camera's `workspace_id` when an insert
+leaves it out. `found_item.workspace_id` is its own column so an item outlives its camera. Lost
+reports are filed in a workspace; matching only looks at that workspace's gallery. Camera names
+are unique per workspace.
+
+The **Default** workspace has the fixed id `00000000-0000-0000-0000-000000000001`. Hand-written
+inserts into `camera` and `lost_item` (seed.sql, tools) land there, and the API never deletes it.
+Deleting any other workspace cascades to everything in it.
 
 ## Seeding
 

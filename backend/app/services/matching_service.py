@@ -162,6 +162,7 @@ class MatchingService:
         reporter_email: Optional[str] = None,
         class_name: Optional[str] = None,
         lost_after: Optional[datetime] = None,
+        workspace_id: Optional[UUID] = None,
     ) -> Dict[str, Any]:
         """Register a lost item from a photo and/or a text description.
 
@@ -177,10 +178,11 @@ class MatchingService:
         query = """
             INSERT INTO lost_item (
                 reporter_name, reporter_email, description, class_name, dominant_color,
-                lost_after, phash, color_hist
+                lost_after, phash, color_hist, workspace_id
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            RETURNING lost_id, reporter_name, reporter_email, description, class_name,
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+                    COALESCE($9, '00000000-0000-0000-0000-000000000001'::uuid))
+            RETURNING lost_id, workspace_id, reporter_name, reporter_email, description, class_name,
                       dominant_color, lost_after, reported_at, status
         """
         report = await self.db_manager.execute_query(
@@ -194,6 +196,7 @@ class MatchingService:
                 lost_after,
                 features.phash if features else None,
                 features.histogram_bytes if features else None,
+                workspace_id,
             ),
             fetch_one=True,
         )
@@ -228,10 +231,19 @@ class MatchingService:
         )
 
     async def list_lost_items(
-        self, status: Optional[str] = None, page: int = 1, per_page: int = 20
+        self,
+        status: Optional[str] = None,
+        page: int = 1,
+        per_page: int = 20,
+        workspace_id: Optional[UUID] = None,
     ) -> Dict[str, Any]:
-        where = "WHERE status = $1" if status else ""
-        params: List[Any] = [status] if status else []
+        conditions: List[str] = []
+        params: List[Any] = []
+        for column, value in (("workspace_id", workspace_id), ("status", status)):
+            if value:
+                params.append(value)
+                conditions.append(f"{column} = ${len(params)}")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
         total = await self.db_manager.execute_query(
             f"SELECT COUNT(*) AS total FROM lost_item {where}", tuple(params), fetch_one=True
@@ -267,7 +279,7 @@ class MatchingService:
         """Rank unclaimed found items against a stored lost report."""
         report = await self.db_manager.execute_query(
             """
-            SELECT class_name, dominant_color, lost_after, phash, color_hist
+            SELECT workspace_id, class_name, dominant_color, lost_after, phash, color_hist
             FROM lost_item WHERE lost_id = $1
             """,
             (lost_id,),
@@ -286,6 +298,8 @@ class MatchingService:
             LEFT JOIN camera c          ON c.camera_id = f.camera_id
             LEFT JOIN abandoned_event e ON e.event_id  = f.event_id
             WHERE f.status = 'UNCLAIMED'
+              -- Only the gallery of the workspace the report was filed in.
+              AND f.workspace_id = $5
               AND ($3::timestamptz IS NULL OR f.found_at >= $3)
               AND (($1::text IS NULL AND $2::text IS NULL)
                    OR f.class_name = $1 OR f.dominant_color = $2
@@ -298,7 +312,7 @@ class MatchingService:
                      f.found_at
             LIMIT $4
             """,
-            (class_name, color, report["lost_after"], _MAX_CANDIDATES),
+            (class_name, color, report["lost_after"], _MAX_CANDIDATES, report["workspace_id"]),
             fetch_all=True,
         )
 
@@ -425,11 +439,13 @@ class MatchingService:
         end: Optional[datetime] = None,
         page: int = 1,
         per_page: int = 20,
+        workspace_id: Optional[UUID] = None,
     ) -> Dict[str, Any]:
         """The found gallery and the search page: every filter is optional."""
         conditions: List[str] = []
         params: List[Any] = []
         for column, op, value in (
+            ("f.workspace_id", "=", workspace_id),
             ("f.status", "=", status),
             ("f.camera_id", "=", camera_id),
             ("f.class_name", "=", class_name),

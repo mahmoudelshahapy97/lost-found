@@ -7,7 +7,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
 
-from app.api.deps import get_image_viewer, require_role
+from app.api.deps import (
+    ensure_in_workspace,
+    ensure_visible_resource,
+    get_image_viewer,
+    get_workspace_id,
+    require_role,
+)
 from app.schemas.event_schemas import EventListResponse, EventStatusUpdate
 from app.services.event_service import event_service
 from app.services.object_store import object_store
@@ -29,8 +35,9 @@ async def list_events(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     current_user: Dict[str, Any] = Depends(require_role("viewer")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
-    """Abandoned-object events, newest first."""
+    """Abandoned-object events in the active workspace, newest first."""
     try:
         return await event_service.list_events(
             camera_id=camera_id,
@@ -41,6 +48,7 @@ async def list_events(
             include_frame=include_frame,
             page=page,
             per_page=per_page,
+            workspace_id=workspace_id,
         )
     except Exception as e:
         logger.error("Error listing events: %s", e, exc_info=True)
@@ -53,10 +61,13 @@ async def list_events(
 async def event_stats(
     camera_id: Optional[UUID] = Query(None),
     current_user: Dict[str, Any] = Depends(require_role("viewer")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
     """Totals used by dashboards: all-time, currently open, and last 24 hours."""
     try:
-        return create_response(True, "Event statistics.", await event_service.stats(camera_id))
+        return create_response(
+            True, "Event statistics.", await event_service.stats(camera_id, workspace_id)
+        )
     except Exception as e:
         logger.error("Error computing event stats: %s", e, exc_info=True)
         raise HTTPException(
@@ -69,7 +80,9 @@ async def get_event(
     event_id: UUID,
     include_frame: bool = Query(True),
     current_user: Dict[str, Any] = Depends(require_role("viewer")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
+    await ensure_in_workspace("event", event_id, workspace_id, "Event not found.")
     event = await event_service.get_event(event_id, include_frame=include_frame)
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
@@ -84,6 +97,7 @@ async def get_event_frame(
     event_id: UUID, current_user: Dict[str, Any] = Depends(get_image_viewer)
 ) -> Response:
     """The annotated frame captured at the moment the object was declared abandoned."""
+    await ensure_visible_resource(current_user, "event", event_id)
     jpeg = await event_service.get_event_frame(event_id)
     if not jpeg:
         raise HTTPException(
@@ -106,6 +120,7 @@ async def get_event_clip(
     Served with Range support, so a ``<video>`` element can seek - from MinIO,
     or from disk for a clip saved while MinIO was unreachable.
     """
+    await ensure_visible_resource(current_user, "event", event_id)
     key, relative = await event_service.get_clip_location(event_id)
     if key:
         size = await object_store.size(key)
@@ -137,12 +152,14 @@ async def update_event_status(
     event_id: UUID,
     payload: EventStatusUpdate,
     current_user: Dict[str, Any] = Depends(require_role("operator")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
     """Acknowledge, resolve, or dismiss an event as a false positive.
 
     Optional `action_taken` / `description` record how it was handled. A false
     positive also discards the event's unclaimed found item.
     """
+    await ensure_in_workspace("event", event_id, workspace_id, "Event not found.")
     updated = await event_service.update_status(
         event_id,
         payload.status.value,

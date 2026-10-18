@@ -133,6 +133,7 @@ export default function Users() {
                   <TableCell>Username</TableCell>
                   <TableCell>Email</TableCell>
                   <TableCell>Role</TableCell>
+                  <TableCell>Workspaces</TableCell>
                   <TableCell>Active</TableCell>
                   <TableCell>Last login</TableCell>
                   <TableCell align="right">Actions</TableCell>
@@ -156,6 +157,23 @@ export default function Users() {
                       <TableCell>{user.email}</TableCell>
                       <TableCell>
                         <Chip size="small" label={user.role} color={ROLE_COLOR[user.role]} />
+                      </TableCell>
+                      <TableCell>
+                        {user.role === "admin" ? (
+                          <Typography variant="caption" color="text.secondary">
+                            All (admin)
+                          </Typography>
+                        ) : user.workspaces?.length ? (
+                          <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                            {user.workspaces.map((w) => (
+                              <Chip key={w.workspace_id} size="small" variant="outlined" label={w.name} />
+                            ))}
+                          </Stack>
+                        ) : (
+                          <Typography variant="caption" color="warning.main">
+                            None: sees nothing
+                          </Typography>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Switch

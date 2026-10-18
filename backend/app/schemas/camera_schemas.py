@@ -42,6 +42,7 @@ class CameraUpdate(BaseModel):
 
 class CameraResponse(BaseModel):
     camera_id: UUID
+    workspace_id: Optional[UUID] = None
     name: str
     rtsp_url: str
     location: Optional[str] = None

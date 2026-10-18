@@ -1,14 +1,16 @@
 # app/api/routes/system_router.py
 import logging
 from typing import Any, Dict
+from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
-from app.api.deps import require_role
+from app.api.deps import get_workspace_id, require_role
 from app.core.config import config
 from app.services.model_registry import model_registry
 from app.services.object_store import object_store
 from app.services.stream_manager import stream_manager
+from app.services.workspace_service import workspace_service
 from app.utils.response import create_response
 
 logger = logging.getLogger(__name__)
@@ -18,9 +20,10 @@ router = APIRouter(
 
 
 @router.get("/workers")
-async def worker_status() -> Dict[str, Any]:
-    """State of every camera worker currently held by the stream manager."""
-    workers = stream_manager.status()
+async def worker_status(workspace_id: UUID = Depends(get_workspace_id)) -> Dict[str, Any]:
+    """State of the active workspace's camera workers held by the stream manager."""
+    cameras = {str(camera_id) for camera_id in await workspace_service.camera_ids(workspace_id)}
+    workers = [w for w in stream_manager.status() if str(w.get("camera_id")) in cameras]
     return create_response(
         True,
         f"{len(workers)} worker(s).",

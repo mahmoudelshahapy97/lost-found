@@ -5,10 +5,18 @@ import shutil
 from typing import Any, Dict, List
 from uuid import UUID
 
+_NOT_FOUND = "Camera not found."
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 
-from app.api.deps import get_image_viewer, require_role
+from app.api.deps import (
+    ensure_in_workspace,
+    ensure_visible_resource,
+    get_image_viewer,
+    get_workspace_id,
+    require_role,
+)
 from app.core.config import config
 from app.schemas.camera_schemas import CameraCreate, CameraResponse, CameraUpdate
 from app.services.camera_service import camera_service
@@ -28,14 +36,17 @@ _viewers = asyncio.Semaphore(config.max_mjpeg_clients)
 
 @router.post("", response_model=CameraResponse, status_code=status.HTTP_201_CREATED)
 async def create_camera(
-    payload: CameraCreate, current_user: Dict[str, Any] = Depends(require_role("admin"))
+    payload: CameraCreate,
+    current_user: Dict[str, Any] = Depends(require_role("admin")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
-    """Register an RTSP camera. Enabled cameras start processing immediately."""
+    """Register an RTSP camera in the active workspace. Enabled cameras start
+    processing immediately."""
     try:
-        if await camera_service.get_camera_by_name(payload.name):
+        if await camera_service.get_camera_by_name(payload.name, workspace_id):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"A camera named '{payload.name}' already exists.",
+                detail=f"A camera named '{payload.name}' already exists in this workspace.",
             )
 
         camera = await camera_service.create_camera(
@@ -45,6 +56,7 @@ async def create_camera(
             enabled=payload.enabled,
             roi=payload.roi,
             settings=payload.settings,
+            workspace_id=workspace_id,
         )
 
         if camera["enabled"]:
@@ -64,9 +76,10 @@ async def create_camera(
 async def list_cameras(
     enabled_only: bool = Query(False),
     current_user: Dict[str, Any] = Depends(require_role("viewer")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> List[Dict[str, Any]]:
     try:
-        return await camera_service.list_cameras(enabled_only=enabled_only)
+        return await camera_service.list_cameras(enabled_only=enabled_only, workspace_id=workspace_id)
     except Exception as e:
         logger.error("Error listing cameras: %s", e, exc_info=True)
         raise HTTPException(
@@ -76,8 +89,11 @@ async def list_cameras(
 
 @router.get("/{camera_id}", response_model=CameraResponse)
 async def get_camera(
-    camera_id: UUID, current_user: Dict[str, Any] = Depends(require_role("viewer"))
+    camera_id: UUID,
+    current_user: Dict[str, Any] = Depends(require_role("viewer")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
+    await ensure_in_workspace("camera", camera_id, workspace_id, _NOT_FOUND)
     camera = await camera_service.get_camera(camera_id)
     if not camera:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found.")
@@ -89,6 +105,7 @@ async def update_camera(
     camera_id: UUID,
     payload: CameraUpdate,
     current_user: Dict[str, Any] = Depends(require_role("admin")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
     """Patch a camera, then make the worker match ``enabled``.
 
@@ -96,8 +113,14 @@ async def update_camera(
     camera starts it and disabling one stops it.
     """
     try:
-        if not await camera_service.get_camera(camera_id):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found.")
+        await ensure_in_workspace("camera", camera_id, workspace_id, _NOT_FOUND)
+        if payload.name is not None:
+            existing = await camera_service.get_camera_by_name(payload.name, workspace_id)
+            if existing and existing["camera_id"] != camera_id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"A camera named '{payload.name}' already exists in this workspace.",
+                )
 
         camera = await camera_service.update_camera(
             camera_id, **payload.model_dump(exclude_unset=True)
@@ -124,9 +147,12 @@ async def update_camera(
 
 @router.delete("/{camera_id}")
 async def delete_camera(
-    camera_id: UUID, current_user: Dict[str, Any] = Depends(require_role("admin"))
+    camera_id: UUID,
+    current_user: Dict[str, Any] = Depends(require_role("admin")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
     """Delete a camera and, by cascade, all of its events and found items."""
+    await ensure_in_workspace("camera", camera_id, workspace_id, _NOT_FOUND)
     try:
         await stream_manager.stop_camera(camera_id)
         deleted = await camera_service.delete_camera(camera_id)
@@ -149,7 +175,9 @@ async def delete_camera(
 
 @router.post("/{camera_id}/start")
 async def start_camera(
-    camera_id: UUID, current_user: Dict[str, Any] = Depends(require_role("operator"))
+    camera_id: UUID,
+    current_user: Dict[str, Any] = Depends(require_role("operator")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
     """Start the detection worker for a camera and keep it running.
 
@@ -157,9 +185,10 @@ async def start_camera(
     supervisor restarts it if it dies.
     """
     try:
+        await ensure_in_workspace("camera", camera_id, workspace_id, _NOT_FOUND)
         camera = await camera_service.get_camera(camera_id)
         if not camera:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND)
         if not camera["enabled"]:
             camera = await camera_service.update_camera(camera_id, enabled=True)
 
@@ -176,13 +205,16 @@ async def start_camera(
 
 @router.post("/{camera_id}/stop")
 async def stop_camera(
-    camera_id: UUID, current_user: Dict[str, Any] = Depends(require_role("operator"))
+    camera_id: UUID,
+    current_user: Dict[str, Any] = Depends(require_role("operator")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
     """Stop the worker and clear ``enabled``, so it stays stopped across restarts.
 
     The flag is cleared before the worker stops: the supervisor re-reads it
     before any restart, so it cannot bring the camera straight back.
     """
+    await ensure_in_workspace("camera", camera_id, workspace_id, _NOT_FOUND)
     camera = await camera_service.get_camera(camera_id)
     if camera and camera["enabled"]:
         await camera_service.update_camera(camera_id, enabled=False)
@@ -196,9 +228,12 @@ async def stop_camera(
 
 @router.get("/{camera_id}/status")
 async def camera_status(
-    camera_id: UUID, current_user: Dict[str, Any] = Depends(require_role("viewer"))
+    camera_id: UUID,
+    current_user: Dict[str, Any] = Depends(require_role("viewer")),
+    workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
     """Live worker state including every object currently being tracked."""
+    await ensure_in_workspace("camera", camera_id, workspace_id, _NOT_FOUND)
     worker = stream_manager.get_worker(camera_id)
     if worker is None:
         return create_response(
@@ -217,6 +252,7 @@ async def camera_snapshot(
     current_user: Dict[str, Any] = Depends(get_image_viewer),
 ) -> Response:
     """Latest frame from the running worker, or a one-shot grab when it is stopped."""
+    await ensure_visible_resource(current_user, "camera", camera_id)
     camera = await camera_service.get_camera(camera_id)
     if not camera:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found.")
@@ -251,6 +287,7 @@ async def camera_stream(
     current_user: Dict[str, Any] = Depends(get_image_viewer),
 ) -> StreamingResponse:
     """MJPEG live view of the annotated detection output, for an ``<img src>``."""
+    await ensure_visible_resource(current_user, "camera", camera_id)
     worker = stream_manager.get_worker(camera_id)
     if worker is None:
         raise HTTPException(
