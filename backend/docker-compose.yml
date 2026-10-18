@@ -39,6 +39,8 @@ services:
       # Persist downloaded YOLO/CLIP weights across rebuilds
       - ./models:/app/models
       - ./logs:/app/logs
+      # Versioned schema changes, applied at startup (app/core/migrations.py).
+      - ../database/migrations:/app/migrations:ro
     ports:
       - "8000:8000"
     # YOLO and CLIP run on the GPU (MODEL_DEVICE=cuda in .env).

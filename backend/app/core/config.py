@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     cors_origins: List[str] = ["http://localhost:3000", "http://localhost:8000"]
     cors_allow_credentials: bool = True
     cors_allow_methods: List[str] = ["GET", "POST", "PUT", "PATCH", "DELETE"]
-    cors_allow_headers: List[str] = ["Content-Type", "Authorization", "X-Request-ID"]
+    cors_allow_headers: List[str] = ["Content-Type", "Authorization", "X-Request-ID", "X-Workspace-Id"]
 
     # =========================================================================
     # AUTH
@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     db_max_retries: int = 10
     db_retry_delay_base: int = 2
     db_retry_delay_max: int = 30
+
+    # database/migrations, mounted read-only by docker-compose.yml. When this
+    # path is missing (a checkout run outside Docker) the repo's own folder is
+    # used -- see app/core/migrations.py.
+    migrations_dir: str = "/app/migrations"
 
     @property
     def database_dsn(self) -> str:

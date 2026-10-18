@@ -19,10 +19,10 @@ import numpy as np
 import pytest
 
 from app.core.config import config
+from app.core.migrations import run_migrations
 from app.core.database import (
     close_db_pool,
     db_manager,
-    ensure_schema_upgrades,
     init_db_pool,
     wait_for_schema,
 )
@@ -49,7 +49,7 @@ async def database():
         pytest.skip("Database reachable but database/init/002_schema.sql has not been applied.")
 
     # The same idempotent upgrades the api runs at startup.
-    await ensure_schema_upgrades()
+    await run_migrations()
     yield
     await close_db_pool()
 

@@ -12,12 +12,12 @@ from app.core.config import config
 from app.core.database import (
     check_postgres_health,
     close_db_pool,
-    ensure_schema_upgrades,
     get_pool,
     init_db_pool,
     wait_for_schema,
 )
 from app.core.logging_config import setup_logging
+from app.core.migrations import run_migrations
 from app.services import retention
 from app.services.stream_manager import stream_manager
 from app.services.user_service import user_service
@@ -42,9 +42,9 @@ async def lifespan(app: FastAPI):
     schema_ready = await wait_for_schema()
     if schema_ready:
         try:
-            await ensure_schema_upgrades()
+            await run_migrations()
         except Exception as e:
-            logger.error("Schema upgrade failed: %s", e, exc_info=True)
+            logger.error("Schema migration failed: %s", e, exc_info=True)
 
     if schema_ready:
         try:

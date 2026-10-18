@@ -76,6 +76,8 @@ services:
       - ./backend/logs:/app/logs
       # Evidence clips (data/clips/<camera_id>/<event_id>.mp4) survive rebuilds.
       - ./backend/data:/app/data
+      # Versioned schema changes, applied at startup (app/core/migrations.py).
+      - ./database/migrations:/app/migrations:ro
     # Workers need time to release their captures before the container dies.
     stop_grace_period: 30s
     deploy:

@@ -26,6 +26,7 @@ first admin is created by the API at startup if `app_user` is empty (see
 | `init/002_schema.sql` | first boot, automatic | tables, constraints, indexes |
 | `seed/001_seed.sql` | on demand | demo cameras, events, items, matches |
 | `queries/*.sql` | never automatic | reference queries, one file per area |
+| `migrations/NNN_*.sql` | API startup, once each | versioned changes for existing volumes |
 
 `init/` is bind-mounted into `/docker-entrypoint-initdb.d/` by
 `backend/docker-compose.yml`, which Postgres executes **once**, in filename order,
@@ -53,6 +54,30 @@ docker compose exec -T db psql -U lostfound -d lostfound_db < ../database/init/0
 ```
 
 Every statement is `IF NOT EXISTS`, so re-applying is a no-op.
+
+## Migrations
+
+`schema.sql` is always the full, current schema for a fresh volume. Postgres runs it only once,
+so every later change to it **also** goes into a new numbered file in `migrations/`. This is the
+same idea as the main InsightEye repo's `versions/` + `migrations.txt`.
+
+- **Applied:** the API mounts `migrations/` at `/app/migrations` (`MIGRATIONS_DIR`). At startup,
+  `app/core/migrations.py` applies each file not yet in `schema_migration`, in name order, each
+  in its own transaction, under an advisory lock.
+- **Recorded:** each applied file is stored by name with its sha256.
+- **Idempotent:** use `IF NOT EXISTS` and `DO $$ … $$` guards. On a fresh volume every file runs
+  against a schema that already has the change, and must be a no-op there.
+- **Never edit an applied file.** It is not re-run; the API only logs a checksum warning. Add the
+  next number instead.
+
+```bash
+docker compose exec api python -m app.core.migrations --list   # applied / pending
+docker compose exec api python -m app.core.migrations          # apply now, without a restart
+```
+
+| File | Change |
+| --- | --- |
+| `001_baseline_upgrades.sql` | the old in-code `SCHEMA_UPGRADES` (MinIO keys, phash, dropped embeddings) |
 
 ## Seeding
 
