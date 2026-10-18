@@ -33,3 +33,26 @@ async def analytics_summary(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not compute analytics."
         )
     return create_response(True, "Analytics summary.", data)
+
+
+@router.get("/confidence-audit")
+async def confidence_audit(
+    days: int = Query(7, ge=1, le=90),
+    camera_id: Optional[UUID] = Query(None),
+    tz: str = Query("UTC", max_length=64),
+    current_user: Dict[str, Any] = Depends(require_role("viewer")),
+) -> Dict[str, Any]:
+    """Model accuracy & confidence audit for the window: detector confidence
+    totals, a histogram, the per-camera spread and the latest scored alerts,
+    each with the false positives operators marked."""
+    try:
+        data = await analytics_service.confidence_audit(days=days, camera_id=camera_id, tz=tz)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+    except Exception as e:
+        logger.error("Error computing the confidence audit: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not compute the confidence audit.",
+        )
+    return create_response(True, "Confidence audit.", data)

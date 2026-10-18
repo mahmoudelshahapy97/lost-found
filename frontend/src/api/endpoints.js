@@ -96,6 +96,9 @@ export const analytics = {
   /** {days, camera_id, tz} -> KPIs, series, heatmap and breakdowns for one window. */
   summary: (params, opts) =>
     client.get("/analytics/summary", { params, ...opts }).then((r) => r.data),
+  /** {days, camera_id, tz} -> detector confidence histogram, spread per camera, latest alerts. */
+  confidenceAudit: (params, opts) =>
+    client.get("/analytics/confidence-audit", { params, ...opts }).then((r) => r.data),
 };
 
 // --- lost items -----------------------------------------------------------

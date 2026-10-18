@@ -14,9 +14,14 @@ from uuid import UUID
 
 import asyncpg
 
+from app.core.config import config
 from app.core.database import db_manager
 
 logger = logging.getLogger(__name__)
+
+
+HISTOGRAM_BUCKETS = 10
+LATEST_EVENTS = 50
 
 
 def _num(value: Any) -> Optional[float]:
@@ -234,6 +239,128 @@ class AnalyticsService:
                 "reports_filed": kpis["lost_reports"],
                 "reunions": kpis["reunions"],
             },
+        }
+
+    async def confidence_audit(
+        self, days: int = 7, camera_id: Optional[UUID] = None, tz: str = "UTC"
+    ) -> Dict[str, Any]:
+        """Model accuracy & confidence audit (InsightEye evidence_analytics.confidence_audit).
+
+        How sure the detector was about the alerts in the window: totals, a
+        10-bucket histogram over [0, 1], the spread per camera and the latest
+        scored alerts. Operator verdicts stand in for ground truth, so each part
+        also counts false positives. ``low_confidence`` counts alerts within 0.1
+        of the detector threshold, the ones most worth a second look.
+        """
+        window = await self._window(days, tz)
+        start_at = window["start_at"]
+        threshold = float(config.yolo_confidence)
+        low_cutoff = round(min(1.0, threshold + 0.1), 4)
+
+        base: Tuple[Any, ...] = (start_at, camera_id) if camera_id else (start_at,)
+        n = len(base)
+        where = "e.abandoned_at >= $1" + (" AND e.camera_id = $2" if camera_id else "")
+        scored = f"{where} AND e.confidence IS NOT NULL"
+        low = f"${n + 1}"
+
+        totals = await self.db_manager.execute_query(
+            f"""
+            SELECT COUNT(*)                                                  AS events,
+                   COUNT(e.confidence)                                       AS scored_events,
+                   AVG(e.confidence)::float                                  AS avg_confidence,
+                   MIN(e.confidence)::float                                  AS min_confidence,
+                   MAX(e.confidence)::float                                  AS max_confidence,
+                   COUNT(*) FILTER (WHERE e.confidence < {low})              AS low_confidence,
+                   COUNT(*) FILTER (WHERE e.status = 'ACKNOWLEDGED')         AS acknowledged,
+                   COUNT(*) FILTER (WHERE e.status = 'RESOLVED')             AS resolved,
+                   COUNT(*) FILTER (WHERE e.status = 'FALSE_POSITIVE')       AS false_positives,
+                   AVG(e.confidence) FILTER (WHERE e.status = 'RESOLVED')::float
+                                                                             AS avg_confidence_resolved,
+                   AVG(e.confidence) FILTER (WHERE e.status = 'FALSE_POSITIVE')::float
+                                                                             AS avg_confidence_false_positive
+            FROM abandoned_event e
+            WHERE {where}
+            """,
+            base + (low_cutoff,),
+            fetch_one=True,
+        )
+
+        bucket_rows = await self.db_manager.execute_query(
+            f"""
+            SELECT LEAST(width_bucket(e.confidence, 0, 1, {HISTOGRAM_BUCKETS}), {HISTOGRAM_BUCKETS})
+                       AS b,
+                   COUNT(*)                                            AS count,
+                   COUNT(*) FILTER (WHERE e.status = 'FALSE_POSITIVE') AS false_positives
+            FROM abandoned_event e
+            WHERE {scored}
+            GROUP BY 1
+            """,
+            base,
+            fetch_all=True,
+        )
+        by_bucket = {row["b"]: row for row in bucket_rows}
+        step = 1 / HISTOGRAM_BUCKETS
+        histogram = [
+            {
+                "bucket": f"{(i - 1) * step:.1f}-{i * step:.1f}",
+                "min": round((i - 1) * step, 2),
+                "max": round(i * step, 2),
+                "count": by_bucket[i]["count"] if i in by_bucket else 0,
+                "false_positives": by_bucket[i]["false_positives"] if i in by_bucket else 0,
+            }
+            for i in range(1, HISTOGRAM_BUCKETS + 1)
+        ]
+
+        camera_rows = await self.db_manager.execute_query(
+            f"""
+            SELECT e.camera_id,
+                   c.name                                              AS camera_name,
+                   COUNT(*)                                            AS events,
+                   AVG(e.confidence)::float                            AS avg_confidence,
+                   MIN(e.confidence)::float                            AS min_confidence,
+                   MAX(e.confidence)::float                            AS max_confidence,
+                   COUNT(*) FILTER (WHERE e.confidence < {low})        AS low_confidence,
+                   COUNT(*) FILTER (WHERE e.status = 'FALSE_POSITIVE') AS false_positives
+            FROM abandoned_event e
+            LEFT JOIN camera c ON c.camera_id = e.camera_id
+            WHERE {scored}
+            GROUP BY e.camera_id, c.name
+            ORDER BY avg_confidence DESC NULLS LAST, camera_name
+            """,
+            base + (low_cutoff,),
+            fetch_all=True,
+        )
+
+        latest = await self.db_manager.execute_query(
+            f"""
+            SELECT e.event_id, e.abandoned_at, e.camera_id, c.name AS camera_name,
+                   e.class_name, e.confidence::float AS confidence, e.status
+            FROM abandoned_event e
+            LEFT JOIN camera c ON c.camera_id = e.camera_id
+            WHERE {scored}
+            ORDER BY e.abandoned_at DESC, e.event_id DESC
+            LIMIT {LATEST_EVENTS}
+            """,
+            base,
+            fetch_all=True,
+        )
+
+        scored_events = totals["scored_events"]
+        return {
+            "window": {"start": start_at, "end": window["now"], "tz": tz},
+            "summary": {
+                **totals,
+                "low_confidence_pct": _pct(totals["low_confidence"], scored_events),
+                "false_positive_pct": _pct(totals["false_positives"], totals["events"]),
+                "threshold": threshold,
+                "low_confidence_cutoff": low_cutoff,
+            },
+            "histogram": histogram,
+            "by_camera": [
+                {**row, "false_positive_pct": _pct(row["false_positives"], row["events"])}
+                for row in camera_rows
+            ],
+            "latest": latest,
         }
 
     @staticmethod

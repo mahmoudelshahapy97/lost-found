@@ -488,8 +488,44 @@ async def test_analytics_summary_windows_and_buckets(camera):
         await analytics_service.summary(days=7, tz="Not/AZone")
 
 
+async def test_confidence_audit_histogram_and_spread(camera):
+    cam = camera["camera_id"]
+    now = datetime.now(timezone.utc)
+    await _insert_event(cam, "bag", now - timedelta(hours=1), confidence=0.92)
+    await _insert_event(cam, "bag", now - timedelta(hours=2), confidence=0.55, status="RESOLVED")
+    await _insert_event(cam, "bag", now - timedelta(hours=3), confidence=0.1, status="FALSE_POSITIVE")
+    await _insert_event(cam, "bag", now - timedelta(hours=4), confidence=None)
+    await _insert_event(cam, "bag", now - timedelta(days=10), confidence=0.3)  # outside the window
+
+    audit = await analytics_service.confidence_audit(days=7, camera_id=cam, tz="UTC")
+    summary = audit["summary"]
+
+    assert summary["events"] == 4
+    assert summary["scored_events"] == 3
+    assert summary["max_confidence"] == pytest.approx(0.92)
+    assert summary["min_confidence"] == pytest.approx(0.1)
+    # The threshold is 0.05, so "low" means under 0.15.
+    assert summary["low_confidence"] == 1
+    assert summary["false_positives"] == 1
+    assert summary["avg_confidence_false_positive"] == pytest.approx(0.1)
+    assert summary["avg_confidence_resolved"] == pytest.approx(0.55)
+
+    assert len(audit["histogram"]) == 10
+    assert sum(b["count"] for b in audit["histogram"]) == 3
+    assert audit["histogram"][1] == {
+        "bucket": "0.1-0.2", "min": 0.1, "max": 0.2, "count": 1, "false_positives": 1,
+    }
+    assert audit["histogram"][9]["count"] == 1
+
+    assert [row["camera_id"] for row in audit["by_camera"]] == [cam]
+    assert audit["by_camera"][0]["false_positive_pct"] == 33.3
+    assert [round(e["confidence"], 2) for e in audit["latest"]] == [0.92, 0.55, 0.1]
+
+
 # ------------------------------------------------------------------- helpers
-async def _insert_event(camera_id, class_name: str, abandoned_at: datetime, status: str = "OPEN"):
+async def _insert_event(
+    camera_id, class_name: str, abandoned_at: datetime, status: str = "OPEN", confidence=0.8
+):
     """An event abandoned after 30 s unattended; the camera fixture's cascade removes it."""
     await db_manager.execute_query(
         """
@@ -497,7 +533,7 @@ async def _insert_event(camera_id, class_name: str, abandoned_at: datetime, stat
             camera_id, track_key, class_name, confidence, bbox, first_seen_at,
             static_since, abandoned_at, status
         )
-        VALUES ($1, $2, $3, 0.8, '{"x1": 0, "y1": 0, "x2": 50, "y2": 50}'::jsonb, $4, $4, $5, $6)
+        VALUES ($1, $2, $3, $7, '{"x1": 0, "y1": 0, "x2": 50, "y2": 50}'::jsonb, $4, $4, $5, $6)
         """,
         (
             camera_id,
@@ -506,6 +542,7 @@ async def _insert_event(camera_id, class_name: str, abandoned_at: datetime, stat
             abandoned_at - timedelta(seconds=30),
             abandoned_at,
             status,
+            confidence,
         ),
     )
 

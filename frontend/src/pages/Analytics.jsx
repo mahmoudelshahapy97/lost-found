@@ -43,7 +43,7 @@ import { EmptyState, ErrorState, Loading } from "../components/DataStates";
 import HourHeatmap from "../components/HourHeatmap";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
-import { formatDuration, formatNumber, titleCase } from "../utils/format";
+import { formatDuration, formatNumber, formatScore, titleCase } from "../utils/format";
 
 ChartJS.register(
   CategoryScale,
@@ -118,6 +118,143 @@ function Funnel({ stages }) {
   );
 }
 
+/**
+ * Model accuracy & confidence audit: how sure the detector was about the
+ * alerts in the window, with operator verdicts standing in for ground truth.
+ */
+function ConfidenceAudit({ audit, baseOptions, theme, dismissed }) {
+  const summary = audit.summary;
+
+  const histogram = useMemo(() => {
+    const buckets = audit.histogram || [];
+    const segment = { borderColor: theme.palette.background.paper, borderWidth: 1, borderRadius: 4 };
+    return {
+      data: {
+        labels: buckets.map((bucket) => `${Math.round(bucket.min * 100)}–${Math.round(bucket.max * 100)}%`),
+        datasets: [
+          {
+            label: "Alerts",
+            data: buckets.map((bucket) => bucket.count - bucket.false_positives),
+            backgroundColor: theme.palette.primary.main,
+            ...segment,
+          },
+          {
+            label: "False positives",
+            data: buckets.map((bucket) => bucket.false_positives),
+            backgroundColor: dismissed,
+            ...segment,
+          },
+        ],
+      },
+      options: {
+        ...baseOptions,
+        scales: {
+          x: { ...baseOptions.scales.x, stacked: true },
+          y: { ...baseOptions.scales.y, stacked: true },
+        },
+        plugins: {
+          ...baseOptions.plugins,
+          tooltip: {
+            callbacks: { title: (items) => (items.length ? `Confidence ${items[0].label}` : "") },
+          },
+        },
+      },
+    };
+  }, [audit, baseOptions, theme, dismissed]);
+
+  if (!summary.scored_events) {
+    return (
+      <ChartCard title="Model confidence audit" subtitle="No scored alerts in this window">
+        <Typography variant="body2" color="text.secondary">
+          Alerts recorded without a detector confidence are left out of the audit.
+        </Typography>
+      </ChartCard>
+    );
+  }
+
+  const facts = [
+    { label: "Average confidence", value: formatScore(summary.avg_confidence) },
+    {
+      label: "Range",
+      value: `${formatScore(summary.min_confidence, 0)} – ${formatScore(summary.max_confidence, 0)}`,
+    },
+    {
+      label: `Below ${formatScore(summary.low_confidence_cutoff, 0)}`,
+      value: `${formatNumber(summary.low_confidence)} (${formatPct(summary.low_confidence_pct)})`,
+    },
+    { label: "Avg on resolved", value: formatScore(summary.avg_confidence_resolved) },
+    { label: "Avg on false positives", value: formatScore(summary.avg_confidence_false_positive) },
+  ];
+
+  return (
+    <Card>
+      <CardContent>
+        <Typography variant="subtitle2">Model confidence audit</Typography>
+        <Typography variant="caption" color="text.secondary">
+          Detector confidence of {formatNumber(summary.scored_events)} scored alerts. Operator
+          verdicts stand in for ground truth: false positives clustering at low confidence point to
+          the threshold, high-confidence ones to the scene.
+        </Typography>
+        <Grid container spacing={3} sx={{ mt: 1 }}>
+          <Grid size={{ xs: 12, lg: 8 }}>
+            <Box sx={{ height: 260 }}>
+              <Bar data={histogram.data} options={histogram.options} />
+            </Box>
+          </Grid>
+          <Grid size={{ xs: 12, lg: 4 }}>
+            <Stack spacing={1.25}>
+              {facts.map((fact) => (
+                <Stack key={fact.label} direction="row" justifyContent="space-between" spacing={2}>
+                  <Typography variant="body2" color="text.secondary">
+                    {fact.label}
+                  </Typography>
+                  <Typography variant="body2" fontWeight={600}>
+                    {fact.value}
+                  </Typography>
+                </Stack>
+              ))}
+              <Typography variant="caption" color="text.disabled">
+                Detector threshold {formatScore(summary.threshold, 0)}; the tracker decides which
+                detections start a track.
+              </Typography>
+            </Stack>
+          </Grid>
+        </Grid>
+      </CardContent>
+      <TableContainer>
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell>Camera</TableCell>
+              <TableCell align="right">Scored alerts</TableCell>
+              <TableCell align="right">Avg</TableCell>
+              <TableCell align="right">Min – max</TableCell>
+              <TableCell align="right">Low confidence</TableCell>
+              <TableCell align="right">False positives</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {audit.by_camera.map((row) => (
+              <TableRow key={row.camera_id || "deleted"} hover>
+                <TableCell>{row.camera_name || "Deleted camera"}</TableCell>
+                <TableCell align="right">{formatNumber(row.events)}</TableCell>
+                <TableCell align="right">{formatScore(row.avg_confidence)}</TableCell>
+                <TableCell align="right">
+                  {formatScore(row.min_confidence, 0)} – {formatScore(row.max_confidence, 0)}
+                </TableCell>
+                <TableCell align="right">{formatNumber(row.low_confidence)}</TableCell>
+                <TableCell align="right">
+                  {formatNumber(row.false_positives)} ({formatPct(row.false_positive_pct)})
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Card>
+  );
+}
+
 export default function Analytics() {
   const theme = useTheme();
   const [days, setDays] = useState(7);
@@ -128,6 +265,16 @@ export default function Analytics() {
   const { data, error, loading, refresh } = useAsync(
     ({ signal }) =>
       analytics.summary(
+        { days, camera_id: cameraId || undefined, tz: TIMEZONE },
+        { signal }
+      ),
+    [days, cameraId]
+  );
+
+  // A separate request, so the main charts never wait on the audit.
+  const audit = useAsync(
+    ({ signal }) =>
+      analytics.confidenceAudit(
         { days, camera_id: cameraId || undefined, tz: TIMEZONE },
         { signal }
       ),
@@ -504,6 +651,23 @@ export default function Analytics() {
                 <ChartCard title="Reunion funnel" subtitle={`Over the ${windowLabel}`}>
                   <Funnel stages={funnelStages} />
                 </ChartCard>
+              </Grid>
+
+              <Grid size={12}>
+                {audit.data?.data ? (
+                  <ConfidenceAudit
+                    audit={audit.data.data}
+                    baseOptions={baseOptions}
+                    theme={theme}
+                    dismissed={dismissed}
+                  />
+                ) : (
+                  <ErrorState
+                    error={audit.error}
+                    onRetry={audit.refresh}
+                    title="Could not load the confidence audit"
+                  />
+                )}
               </Grid>
 
               <Grid size={12}>
