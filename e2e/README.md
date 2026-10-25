@@ -95,8 +95,8 @@ state:
 | `05-teardown.spec.js` | Edit, stop, delete — and check nothing else was taken with it |
 | `07-workspaces.spec.js` | Create a workspace, a camera in it, switch to it, a non-member is shut out, delete it |
 
-The password-reset spec reads the emailed code from a [mailpit](https://mailpit.axllent.org)
-SMTP sink. It runs only when the API has `SMTP_HOST` set to that sink (`SMTP_PORT=1025`,
+The password-reset spec, and the check that confirming a match emails the reporter, read their
+mail from a [mailpit](https://mailpit.axllent.org) SMTP sink. It runs only when the API has `SMTP_HOST` set to that sink (`SMTP_PORT=1025`,
 `SMTP_STARTTLS=false`) and `MAILPIT_URL` (for example `http://mailpit:8025`) is passed to the
 test container; otherwise it is skipped.
 

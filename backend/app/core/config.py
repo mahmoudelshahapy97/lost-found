@@ -90,8 +90,31 @@ class Settings(BaseSettings):
     smtp_timeout_seconds: float = 20.0
 
     @property
-    def password_reset_enabled(self) -> bool:
+    def mail_enabled(self) -> bool:
         return bool(self.smtp_host)
+
+    @property
+    def password_reset_enabled(self) -> bool:
+        return self.mail_enabled
+
+    # =========================================================================
+    # NOTIFICATIONS (app/services/notification_service.py; need SMTP_HOST)
+    # =========================================================================
+    # New alerts are mailed to every active account at or above this role that
+    # can see the camera's workspace and has not turned alert emails off.
+    alert_emails_enabled: bool = True
+    alert_email_min_role: str = "operator"
+    # At most one alert email per camera in this window; alerts inside it are
+    # counted and mentioned in the next email.
+    alert_email_cooldown_seconds: float = 300.0
+    # The reporter of a lost item is mailed once its match is confirmed.
+    reporter_emails_enabled: bool = True
+    reporter_pickup_note: str = (
+        "Please bring photo ID to the lost property desk to collect it."
+    )
+    # The console's address as people open it, for links in emails
+    # (e.g. https://lostfound.example.com). Left empty, emails carry no links.
+    console_url: str = ""
 
     # =========================================================================
     # LOGGING

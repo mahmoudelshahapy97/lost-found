@@ -38,6 +38,8 @@ class LostItemResponse(BaseModel):
     lost_after: Optional[datetime] = None
     reported_at: datetime
     status: str
+    # When the reporter was emailed that the item was found; detail view only.
+    reporter_notified_at: Optional[datetime] = None
     photo_base64: Optional[str] = None
 
 

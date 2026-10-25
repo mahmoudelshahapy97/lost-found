@@ -210,7 +210,7 @@ class MatchingService:
         row = await self.db_manager.execute_query(
             """
             SELECT lost_id, reporter_name, reporter_email, description, class_name,
-                   dominant_color, lost_after, reported_at, status
+                   dominant_color, lost_after, reported_at, status, reporter_notified_at
             FROM lost_item WHERE lost_id = $1
             """,
             (lost_id,),

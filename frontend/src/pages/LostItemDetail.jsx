@@ -159,9 +159,18 @@ export default function LostItemDetail() {
     setPendingConfirm(null);
     setBusy(true);
     try {
-      await matchApi.confirm({ lostId, foundId: match.found_id, score: match.score });
-      toast.success("Match confirmed. The report is resolved and the item is marked claimed.");
+      const result = await matchApi.confirm({ lostId, foundId: match.found_id, score: match.score });
+      const emailing =
+        result?.data?.reporter_email_queued &&
+        item.data?.reporter_email &&
+        !item.data.reporter_notified_at;
+      toast.success(
+        "Match confirmed. The report is resolved and the item is marked claimed." +
+          (emailing ? " The reporter is being emailed." : "")
+      );
       item.refresh();
+      // The email goes out after the response; look again for its timestamp.
+      if (emailing) setTimeout(() => item.refresh(), 3000);
       ranking.refresh();
     } catch (err) {
       toast.error(errorMessage(err));
@@ -281,6 +290,11 @@ export default function LostItemDetail() {
                 {report.reporter_email ? (
                   <Typography variant="caption" color="text.disabled">
                     {report.reporter_email}
+                  </Typography>
+                ) : null}
+                {report.reporter_notified_at ? (
+                  <Typography variant="caption" color="success.main" sx={{ display: "block" }}>
+                    Told it was found · {formatDateTime(report.reporter_notified_at)}
                   </Typography>
                 ) : null}
               </DetailRow>

@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 from uuid import UUID
 
 import numpy as np
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 
 from app.api.deps import (
     ensure_in_workspace,
@@ -27,6 +27,7 @@ from app.schemas.lostfound_schemas import (
     MatchListResponse,
 )
 from app.services.matching_service import matching_service
+from app.services.notification_service import notification_service
 from app.utils.image_utils import decode_jpeg
 from app.utils.response import create_response
 
@@ -256,18 +257,25 @@ async def get_found_crop(
 @router.post("/matches/confirm")
 async def confirm_match(
     payload: MatchConfirmRequest,
+    background: BackgroundTasks,
     current_user: Dict[str, Any] = Depends(require_role("operator")),
     workspace_id: UUID = Depends(get_workspace_id),
 ) -> Dict[str, Any]:
     """Confirm a pairing: the lost report is resolved and the found item is claimed.
-    Both must be in the active workspace."""
+    Both must be in the active workspace. The reporter, if they left an email,
+    is told after the response (once per report)."""
     await ensure_in_workspace("lost", payload.lost_id, workspace_id, _LOST_NOT_FOUND)
     await ensure_in_workspace("found", payload.found_id, workspace_id, _FOUND_NOT_FOUND)
     try:
         match = await matching_service.confirm_match(
             payload.lost_id, payload.found_id, payload.score
         )
-        return create_response(True, "Match confirmed.", dict(match) if match else None)
+        email_reporter = config.mail_enabled and config.reporter_emails_enabled
+        if email_reporter:
+            background.add_task(notification_service.match_confirmed, payload.lost_id, payload.found_id)
+        data = dict(match) if match else {}
+        data["reporter_email_queued"] = email_reporter
+        return create_response(True, "Match confirmed.", data)
     except Exception as e:
         logger.error("Error confirming match: %s", e, exc_info=True)
         raise HTTPException(

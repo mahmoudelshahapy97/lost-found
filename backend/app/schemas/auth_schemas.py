@@ -41,8 +41,15 @@ class AuthUser(BaseModel):
     full_name: Optional[str] = None
     role: str
     is_active: bool
+    alert_emails: bool = True
     last_login: Optional[datetime] = None
     created_at: datetime
+
+
+class ProfileUpdate(BaseModel):
+    """What an account may change about itself, besides its password."""
+
+    alert_emails: bool
 
 
 class TokenResponse(BaseModel):

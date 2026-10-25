@@ -16,14 +16,17 @@ import ListItemText from "@mui/material/ListItemText";
 import Menu from "@mui/material/Menu";
 import MenuItem from "@mui/material/MenuItem";
 import Stack from "@mui/material/Stack";
+import Switch from "@mui/material/Switch";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import LockResetIcon from "@mui/icons-material/LockReset";
 import LogoutIcon from "@mui/icons-material/Logout";
+import MailIcon from "@mui/icons-material/MarkEmailUnread";
 
 import { auth as authApi } from "../api/endpoints";
 import { errorMessage } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { useAsync } from "../hooks/useAsync";
 import { useToast } from "./Toast";
 
 const ROLE_COLOR = { admin: "error", operator: "primary", viewer: "default" };
@@ -98,6 +101,52 @@ function ChangePasswordDialog({ open, onClose }) {
   );
 }
 
+/**
+ * "Email me new alerts": shown only when the API sends alert emails and the
+ * account's role is one they go to.
+ */
+function AlertEmailsItem() {
+  const { user, hasRole, refreshProfile } = useAuth();
+  const toast = useToast();
+  const options = useAsync(({ signal }) => authApi.options({ signal }), []);
+  const [busy, setBusy] = useState(false);
+
+  if (!options.data?.alert_emails || !hasRole(options.data.alert_email_min_role || "operator")) {
+    return null;
+  }
+
+  const enabled = user.alert_emails !== false;
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      await authApi.updateMe({ alert_emails: !enabled });
+      await refreshProfile();
+      toast.success(enabled ? "Alert emails turned off." : "New alerts will be emailed to you.");
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <MenuItem onClick={toggle} disabled={busy}>
+      <ListItemIcon>
+        <MailIcon fontSize="small" />
+      </ListItemIcon>
+      <ListItemText>Email me new alerts</ListItemText>
+      <Switch
+        size="small"
+        edge="end"
+        checked={enabled}
+        tabIndex={-1}
+        inputProps={{ "aria-label": "Email me new alerts" }}
+        sx={{ ml: 1 }}
+      />
+    </MenuItem>
+  );
+}
+
 export function UserMenu() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -141,6 +190,7 @@ export function UserMenu() {
           </ListItemIcon>
           <ListItemText>Change password</ListItemText>
         </MenuItem>
+        <AlertEmailsItem />
         <MenuItem onClick={handleLogout}>
           <ListItemIcon>
             <LogoutIcon fontSize="small" />

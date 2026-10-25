@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { SEED, TINY_PNG, authHeaders, collectPageProblems } from "./helpers.js";
+import { API, SEED, TINY_PNG, authHeaders, collectPageProblems, latestMailTo } from "./helpers.js";
 
 /**
  * The feature the whole system exists for: someone reports a lost item, the
@@ -260,4 +260,13 @@ test("confirming a match resolves the report and claims the item", async ({ page
   expect(claimed, "no umbrella was marked claimed").toBeTruthy();
 
   await expect(page.getByText("Resolved").first()).toBeVisible({ timeout: 30_000 });
+
+  // The reporter left an email, so they are told it was found -- once.
+  const options = await (await request.get(`${API}/auth/options`)).json();
+  if (options.password_reset && process.env.MAILPIT_URL) {
+    const mail = await latestMailTo(request, before.reporter_email);
+    expect(mail).toContain("has been found");
+    expect(mail).toContain(before.description);
+    await expect(page.getByText(/Told it was found/)).toBeVisible({ timeout: 30_000 });
+  }
 });

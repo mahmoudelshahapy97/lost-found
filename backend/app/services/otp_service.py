@@ -11,18 +11,18 @@ new one cannot be sent within ``otp_resend_seconds``, and ``otp_max_attempts``
 wrong guesses burn it.
 """
 
-import asyncio
 import hashlib
 import hmac
+import html
 import logging
 import secrets
-import smtplib
 from email.message import EmailMessage
 from typing import Any, Dict, Optional
 from uuid import UUID
 
 from app.core.config import config
 from app.core.database import db_manager
+from app.services import mail_service
 
 logger = logging.getLogger(__name__)
 
@@ -111,42 +111,32 @@ class OtpService:
     def _message(user: Dict[str, Any], code: str) -> EmailMessage:
         minutes = max(1, config.otp_ttl_seconds // 60)
         name = user.get("full_name") or user["username"]
-        message = EmailMessage()
-        message["Subject"] = f"{config.app_name}: your password reset code"
-        message["From"] = config.smtp_from
-        message["To"] = user["email"]
-        message.set_content(
-            f"Hello {name},\n\n"
-            f"Your password reset code is {code}.\n"
-            f"It expires in {minutes} minutes and works once.\n\n"
-            "If you did not ask to reset your password, ignore this email; "
-            "your password stays as it is.\n"
+        return mail_service.build(
+            to=user["email"],
+            subject=f"{config.app_name}: your password reset code",
+            text=(
+                f"Hello {name},\n\n"
+                f"Your password reset code is {code}.\n"
+                f"It expires in {minutes} minutes and works once.\n\n"
+                "If you did not ask to reset your password, ignore this email; "
+                "your password stays as it is.\n"
+            ),
+            html=(
+                f"<p>Hello {html.escape(name)},</p>"
+                f"<p>Your password reset code is <strong style=\"font-size:20px;letter-spacing:3px\">{code}</strong>.<br>"
+                f"It expires in {minutes} minutes and works once.</p>"
+                "<p>If you did not ask to reset your password, ignore this email; "
+                "your password stays as it is.</p>"
+            ),
         )
-        message.add_alternative(
-            f"<p>Hello {name},</p>"
-            f"<p>Your password reset code is <strong style=\"font-size:20px;letter-spacing:3px\">{code}</strong>.<br>"
-            f"It expires in {minutes} minutes and works once.</p>"
-            "<p>If you did not ask to reset your password, ignore this email; "
-            "your password stays as it is.</p>",
-            subtype="html",
-        )
-        return message
-
-    @staticmethod
-    def _send_blocking(message: EmailMessage) -> None:
-        smtp_cls = smtplib.SMTP_SSL if config.smtp_ssl else smtplib.SMTP
-        with smtp_cls(config.smtp_host, config.smtp_port, timeout=config.smtp_timeout_seconds) as smtp:
-            if config.smtp_starttls and not config.smtp_ssl:
-                smtp.starttls()
-            if config.smtp_username:
-                smtp.login(config.smtp_username, config.smtp_password)
-            smtp.send_message(message)
 
     async def send_code(self, user: Dict[str, Any], code: str) -> None:
         """Mail the code. Runs as a background task, so failures are only logged."""
         try:
-            await asyncio.to_thread(self._send_blocking, self._message(user, code))
-            logger.info("Password reset code mailed to user %s", user["user_id"])
+            if await mail_service.send([self._message(user, code)]):
+                logger.info("Password reset code mailed to user %s", user["user_id"])
+            else:
+                logger.error("The mail server refused the password reset code for user %s", user["user_id"])
         except Exception as e:
             logger.error("Could not mail the password reset code to user %s: %s", user["user_id"], e)
 

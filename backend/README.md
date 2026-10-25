@@ -134,8 +134,9 @@ created by an admin through `POST /users`.
 | POST | `/auth/logout` | revoke this session |
 | POST | `/auth/logout-all` | revoke every session for the account |
 | GET | `/auth/me` | the calling user |
+| PATCH | `/auth/me` | `{alert_emails}`: whether new alerts are emailed to the calling user |
 | POST | `/auth/change-password` | verifies the current password, then logs the account out everywhere |
-| GET | `/auth/options` | public: `{password_reset}`, whether the login page offers "Forgot your password?" |
+| GET | `/auth/options` | public: `{password_reset, alert_emails, alert_email_min_role}`, whether the login page offers "Forgot your password?", and whether (and to which roles) alert emails are sent |
 | POST | `/auth/forgot-password` | public: `{email}` → mails a 6-digit code; same answer whether or not the account exists |
 | POST | `/auth/reset-password` | public: `{email, code, new_password}` → checks the code and sets the password in one step, logs out everywhere |
 
@@ -143,6 +144,23 @@ Password reset by email is off until `SMTP_HOST` is set (see `.env.example`); th
 routes answer 503 until then. A code expires after `OTP_TTL_SECONDS`, only one can be sent per
 `OTP_RESEND_SECONDS`, and `OTP_MAX_ATTEMPTS` wrong guesses burn it. Only its HMAC is stored, in
 `password_otp`.
+
+### Notifications
+
+The same SMTP settings drive two notifications (`app/services/notification_service.py`); both
+are sent in the background, so a mail server problem is only logged.
+
+- **New alert → staff.** Each alert is emailed, with its annotated frame, to every active account
+  at or above `ALERT_EMAIL_MIN_ROLE` (default operator) that can see the camera's workspace and
+  has not switched alert emails off in the console's account menu (`PATCH /auth/me`). One email
+  per camera per `ALERT_EMAIL_COOLDOWN_SECONDS`; the alerts in between are counted in the next.
+- **Confirmed match → reporter.** Confirming a match emails the report's `reporter_email`, with
+  the found item's photo and `REPORTER_PICKUP_NOTE`. Once per report: `lost_item.reporter_notified_at`
+  records it, and the report page shows it.
+
+Set `CONSOLE_URL` to put links back to the console in the alert emails. In the console itself the
+Alerts page refreshes on its own, the Alerts menu entry counts open alerts, and a new alert pops
+up wherever you are.
 
 Three roles, each a superset of the one before it: `viewer` (read everything),
 `operator` (triage alerts, file reports, confirm matches, start/stop workers), `admin`

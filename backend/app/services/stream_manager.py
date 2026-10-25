@@ -26,6 +26,7 @@ from app.services.abandonment_service import AbandonmentParams, AbandonmentTrack
 from app.services.camera_service import camera_service
 from app.services.clip_recorder import ClipRecorder, FinishedClip, encode_mp4, resize_max_width
 from app.services.event_service import event_service
+from app.services.notification_service import notification_service
 from app.services.object_store import clip_key, object_store
 from app.services.rtsp_reader import RTSPReader
 from app.services.tracking_service import ObjectTracker
@@ -49,6 +50,8 @@ STOPPED = "stopped"
 # clip and returns at once). asyncio only holds weak references to tasks, so
 # this set keeps them alive; shutdown waits on it.
 _clip_tasks: Set[asyncio.Task] = set()
+# Alert emails, held the same way so the camera loop never waits on SMTP.
+_mail_tasks: Set[asyncio.Task] = set()
 
 
 def clip_root() -> Path:
@@ -299,6 +302,13 @@ class CameraWorker:
                 self.events_emitted += 1
                 if config.clip_enabled:
                     self.clips.start(stored["event_id"], now)
+                if config.mail_enabled:
+                    task = asyncio.create_task(
+                        notification_service.alert_raised(self.camera_id, stored["event_id"]),
+                        name=f"alert-mail-{stored['event_id']}",
+                    )
+                    _mail_tasks.add(task)
+                    task.add_done_callback(_mail_tasks.discard)
 
         for clip in self.clips.pop_finished(now):
             self._spawn_clip(clip)

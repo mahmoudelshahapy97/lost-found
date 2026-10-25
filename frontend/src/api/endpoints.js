@@ -25,6 +25,8 @@ export const auth = {
     client.post("/auth/logout", { refresh_token: refreshToken }).then((r) => r.data),
   logoutAll: () => client.post("/auth/logout-all").then((r) => r.data),
   me: (opts) => client.get("/auth/me", opts).then((r) => r.data),
+  /** Self-service settings: {alert_emails}. Returns the updated account. */
+  updateMe: (changes) => client.patch("/auth/me", changes).then((r) => r.data),
   changePassword: (currentPassword, newPassword) =>
     client
       .post("/auth/change-password", {
@@ -32,7 +34,7 @@ export const auth = {
         new_password: newPassword,
       })
       .then((r) => r.data),
-  /** Public: what the login page may offer, e.g. {password_reset: true}. */
+  /** Public: what the console may offer, e.g. {password_reset, alert_emails, alert_email_min_role}. */
   options: (opts) => client.get("/auth/options", opts).then((r) => r.data),
   /** Mails a reset code; the answer is the same whether or not the account exists. */
   forgotPassword: (email) =>

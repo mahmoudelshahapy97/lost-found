@@ -1,7 +1,10 @@
-import { useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import Alert from "@mui/material/Alert";
 import AppBar from "@mui/material/AppBar";
+import Badge from "@mui/material/Badge";
 import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import Divider from "@mui/material/Divider";
 import Drawer from "@mui/material/Drawer";
@@ -11,6 +14,7 @@ import ListItemButton from "@mui/material/ListItemButton";
 import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import ListSubheader from "@mui/material/ListSubheader";
+import Snackbar from "@mui/material/Snackbar";
 import Stack from "@mui/material/Stack";
 import Toolbar from "@mui/material/Toolbar";
 import Tooltip from "@mui/material/Tooltip";
@@ -33,13 +37,15 @@ import DarkModeIcon from "@mui/icons-material/DarkMode";
 import LightModeIcon from "@mui/icons-material/LightMode";
 import MenuBookIcon from "@mui/icons-material/MenuBook";
 
-import { health } from "../api/endpoints";
+import { events, health } from "../api/endpoints";
 import { usePolling } from "../hooks/usePolling";
 import { useAuth } from "../auth/AuthContext";
 import UserMenu from "../components/UserMenu";
 import WorkspaceSwitcher from "../components/WorkspaceSwitcher";
 import { EmptyState, ErrorState, Loading } from "../components/DataStates";
 import { useWorkspace } from "../workspace/WorkspaceContext";
+import { POLL_INTERVAL_MS } from "../utils/constants";
+import { titleCase } from "../utils/format";
 
 const DRAWER_WIDTH = 248;
 
@@ -58,7 +64,14 @@ const NAV_SECTIONS = [
     items: [
       { to: "/", label: "Dashboard", icon: <DashboardIcon />, end: true, minimum: "viewer" },
       { to: "/cameras", label: "Cameras", icon: <VideocamIcon />, minimum: "viewer" },
-      { to: "/events", label: "Alerts", icon: <NotificationsIcon />, minimum: "viewer" },
+      {
+        to: "/events",
+        label: "Alerts",
+        icon: <NotificationsIcon />,
+        minimum: "viewer",
+        // Shows the open-alert count from useAlertWatch.
+        badge: "openAlerts",
+      },
       { to: "/analytics", label: "Analytics", icon: <InsightsIcon />, minimum: "viewer" },
     ],
   },
@@ -120,6 +133,98 @@ function BackendStatus() {
   );
 }
 
+/**
+ * Watches the active workspace's alerts from anywhere in the console: the open
+ * count for the Alerts menu entry, and each alert that arrives while the
+ * console is open, for the pop-up. The first answer after load or a workspace
+ * switch is only the baseline, so old alerts never pop up.
+ */
+function useAlertWatch(workspaceId) {
+  const seenRef = useRef({ workspaceId: null, lastAt: null });
+  const [arrived, setArrived] = useState(null);
+
+  // Each answer is tagged with the workspace it was asked for: right after a
+  // switch the previous workspace's answer is still held, and must not become
+  // the new baseline.
+  const stats = usePolling(
+    ({ signal }) =>
+      events.stats(undefined, { signal }).then((body) => ({ ...body.data, workspaceId })),
+    { intervalMs: POLL_INTERVAL_MS * 2, enabled: Boolean(workspaceId), deps: [workspaceId] }
+  );
+  const current = stats.data?.workspaceId === workspaceId ? stats.data : null;
+
+  useEffect(() => {
+    if (!current || !workspaceId) return;
+    const seen = seenRef.current;
+    const lastAt = current.last_event_at || null;
+    if (seen.workspaceId !== workspaceId) {
+      seenRef.current = { workspaceId, lastAt };
+      setArrived(null);
+      return;
+    }
+    if (!lastAt || (seen.lastAt && new Date(lastAt) <= new Date(seen.lastAt))) return;
+    const since = seen.lastAt;
+    seenRef.current = { workspaceId, lastAt };
+    events
+      .list({ per_page: 5 })
+      .then((page) => {
+        const fresh = (page?.events || []).filter(
+          (event) => !since || new Date(event.abandoned_at) > new Date(since)
+        );
+        if (fresh.length) setArrived({ event: fresh[0], count: fresh.length, key: lastAt });
+      })
+      .catch(() => {});
+  }, [current, workspaceId]);
+
+  return {
+    openAlerts: current?.open ?? 0,
+    arrived,
+    dismiss: () => setArrived(null),
+  };
+}
+
+function NewAlertSnackbar({ arrived, onClose }) {
+  const navigate = useNavigate();
+  const event = arrived?.event;
+  const more = arrived && arrived.count > 1 ? ` (+${arrived.count - 1} more)` : "";
+  return (
+    <Snackbar
+      key={arrived?.key}
+      open={Boolean(arrived)}
+      autoHideDuration={12000}
+      onClose={(_, reason) => reason !== "clickaway" && onClose()}
+      anchorOrigin={{ vertical: "top", horizontal: "right" }}
+      sx={{ mt: 7 }}
+    >
+      <Alert
+        severity="warning"
+        variant="filled"
+        icon={<NotificationsIcon />}
+        onClose={onClose}
+        action={
+          <Button
+            color="inherit"
+            size="small"
+            onClick={() => {
+              onClose();
+              navigate(arrived.count > 1 ? "/events" : `/events/${event.event_id}`);
+            }}
+          >
+            View
+          </Button>
+        }
+        sx={{ alignItems: "center" }}
+      >
+        {event
+          ? `New alert: abandoned ${titleCase(event.class_name || "item").toLowerCase()} on ${
+              event.camera_name || "a camera"
+            }${more}`
+          : null}
+      </Alert>
+    </Snackbar>
+  );
+}
+
 export function AppLayout({ mode, onToggleMode }) {
   const theme = useTheme();
   const isDesktop = useMediaQuery(theme.breakpoints.up("md"));
@@ -127,6 +232,7 @@ export function AppLayout({ mode, onToggleMode }) {
   const location = useLocation();
   const { hasRole } = useAuth();
   const workspace = useWorkspace();
+  const alerts = useAlertWatch(workspace.active?.workspace_id);
 
   const visibleSections = NAV_SECTIONS.map((section) => ({
     ...section,
@@ -173,6 +279,8 @@ export function AppLayout({ mode, onToggleMode }) {
                 component={NavLink}
                 to={item.to}
                 end={item.end}
+                // A badge would otherwise become part of the link's name.
+                aria-label={item.badge ? item.label : undefined}
                 onClick={() => setMobileOpen(false)}
                 sx={{
                   borderRadius: 2,
@@ -188,6 +296,17 @@ export function AppLayout({ mode, onToggleMode }) {
               >
                 <ListItemIcon sx={{ minWidth: 40 }}>{item.icon}</ListItemIcon>
                 <ListItemText primaryTypographyProps={{ fontWeight: 600 }} primary={item.label} />
+                {item.badge && alerts[item.badge] ? (
+                  <Badge
+                    color="error"
+                    max={99}
+                    badgeContent={alerts[item.badge]}
+                    // The link keeps its plain label as its name; the count is a hint.
+                    aria-hidden
+                    title={`${alerts[item.badge]} open`}
+                    sx={{ mr: 1.5, "& .MuiBadge-badge": { position: "static", transform: "none" } }}
+                  />
+                ) : null}
               </ListItemButton>
             ))}
           </List>
@@ -316,6 +435,7 @@ export function AppLayout({ mode, onToggleMode }) {
           )}
         </Box>
       </Box>
+      <NewAlertSnackbar arrived={alerts.arrived} onClose={alerts.dismiss} />
     </Box>
   );
 }

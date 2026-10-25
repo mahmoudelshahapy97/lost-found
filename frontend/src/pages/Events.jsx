@@ -24,11 +24,13 @@ import { EmptyState, ErrorState, Loading } from "../components/DataStates";
 import { EventStatusChip } from "../components/StatusChips";
 import { cameras as cameraApi, events as eventApi } from "../api/endpoints";
 import { useAsync } from "../hooks/useAsync";
+import { usePolling } from "../hooks/usePolling";
 import {
   EVENT_STATUSES,
   OBJECT_CLASSES,
   PAGE_SIZE,
   PAGE_SIZE_OPTIONS,
+  POLL_INTERVAL_MS,
 } from "../utils/constants";
 import { formatDateTime, formatScore, fromNow, titleCase } from "../utils/format";
 
@@ -37,6 +39,8 @@ import { formatDateTime, formatScore, fromNow, titleCase } from "../utils/format
  * filtered view is a real URL: it survives a reload, works with back/forward,
  * and can be linked to from the dashboard and from a camera's detail page.
  */
+const ALERTS_POLL_MS = POLL_INTERVAL_MS * 2;
+
 export default function Events() {
   const [params, setParams] = useSearchParams();
 
@@ -55,7 +59,8 @@ export default function Events() {
     setParams(next);
   };
 
-  const { data, error, loading, refresh } = useAsync(
+  // Polled, so a new alert shows up without anyone reaching for Refresh.
+  const { data, error, loading, refresh } = usePolling(
     ({ signal }) =>
       eventApi.list(
         {
@@ -67,7 +72,7 @@ export default function Events() {
         },
         { signal }
       ),
-    [status, className, cameraId, page, perPage]
+    { intervalMs: ALERTS_POLL_MS, deps: [status, className, cameraId, page, perPage] }
   );
 
   const cameraList = useAsync(({ signal }) => cameraApi.list(undefined, { signal }), []);
@@ -79,7 +84,7 @@ export default function Events() {
     <Box>
       <PageHeader
         title="Alerts"
-        subtitle="Every object a camera worker declared abandoned, newest first."
+        subtitle={`Every object a camera worker declared abandoned, newest first. Updates every ${Math.round(ALERTS_POLL_MS / 1000)} s.`}
         actions={[
           <Button key="refresh" onClick={refresh} startIcon={<RefreshIcon />}>
             Refresh

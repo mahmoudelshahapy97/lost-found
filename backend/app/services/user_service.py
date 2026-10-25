@@ -142,6 +142,13 @@ class UserService:
             (hash_password(new_password), user_id),
         )
 
+    async def set_alert_emails(self, user_id: UUID, enabled: bool) -> Optional[Dict[str, Any]]:
+        return await self.db_manager.execute_query(
+            "UPDATE app_user SET alert_emails = $2, updated_at = NOW() WHERE user_id = $1 RETURNING *",
+            (user_id, enabled),
+            fetch_one=True,
+        )
+
     async def bump_token_version(self, user_id: UUID) -> None:
         """'Log out everywhere' without touching the password."""
         await self.db_manager.execute_query(

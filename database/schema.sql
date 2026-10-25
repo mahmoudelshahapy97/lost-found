@@ -191,6 +191,8 @@ CREATE TABLE IF NOT EXISTS lost_item (
     reported_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     status          TEXT NOT NULL DEFAULT 'OPEN'
                     CHECK (status IN ('OPEN', 'MATCHED', 'RESOLVED', 'CLOSED')),
+    -- When the reporter was emailed that their item was found; set once.
+    reporter_notified_at TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -248,6 +250,8 @@ CREATE TABLE IF NOT EXISTS app_user (
     role          TEXT NOT NULL DEFAULT 'viewer'
                   CHECK (role IN ('admin', 'operator', 'viewer')),
     is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+    -- Operators and admins are emailed new alerts unless they turn this off.
+    alert_emails  BOOLEAN NOT NULL DEFAULT TRUE,
 
     -- Bumped on "log out everywhere", password change and deactivation. Every
     -- access token carries the value it was minted with, and a mismatch is a

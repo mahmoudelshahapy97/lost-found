@@ -14,6 +14,7 @@ from app.schemas.auth_schemas import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
     LoginRequest,
+    ProfileUpdate,
     RefreshRequest,
     ResetPasswordRequest,
     TokenResponse,
@@ -136,6 +137,17 @@ async def me(current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[s
     return current_user
 
 
+@router.patch("/me", response_model=AuthUser)
+async def update_me(
+    payload: ProfileUpdate, current_user: Dict[str, Any] = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """Self-service settings: for now, whether new alerts are emailed to me."""
+    updated = await user_service.set_alert_emails(current_user["user_id"], payload.alert_emails)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found.")
+    return updated
+
+
 @router.post("/change-password")
 async def change_password(
     payload: ChangePasswordRequest, current_user: Dict[str, Any] = Depends(get_current_user)
@@ -184,7 +196,11 @@ def _require_password_reset() -> None:
 @router.get("/options")
 async def auth_options() -> Dict[str, Any]:
     """What the login page may offer. Public: it reveals no account data."""
-    return {"password_reset": config.password_reset_enabled}
+    return {
+        "password_reset": config.password_reset_enabled,
+        "alert_emails": config.mail_enabled and config.alert_emails_enabled,
+        "alert_email_min_role": config.alert_email_min_role,
+    }
 
 
 @router.post("/forgot-password")
