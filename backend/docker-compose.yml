@@ -6,6 +6,7 @@ name: lost-found
 
 services:
   postgres:
+    container_name: lost-found-postgres
     image: pgvector/pgvector:pg17
     restart: unless-stopped
     environment:
@@ -25,6 +26,7 @@ services:
       retries: 20
 
   api:
+    container_name: lost-found-api
     build: .
     restart: unless-stopped
     env_file:
@@ -57,6 +59,7 @@ services:
   # Register the camera as rtsp://mediamtx:8554/lostfound -- that URL is
   # resolved by the api container, so "localhost" there would mean itself.
   mediamtx:
+    container_name: lost-found-mediamtx
     image: bluenviron/mediamtx:latest-ffmpeg
     profiles: ["testing"]
     restart: unless-stopped
