@@ -81,9 +81,10 @@ export function NotificationsProvider({ children }) {
         const ids = new Set(message.notification_ids || []);
         const now = new Date().toISOString();
         setItems((current) =>
-          current?.map((n) => ((message.all || ids.has(n.notification_id)) && !n.read_at ? { ...n, read_at: now } : n))
+          current && current.map((n) => ((message.all || ids.has(n.notification_id)) && !n.read_at ? { ...n, read_at: now } : n))
         );
         setUnread(message.unread);
+        setVersion((v) => v + 1);
       } else if (message.type === "resync") {
         setVersion((v) => v + 1);
         loadList().catch(() => {});
@@ -150,10 +151,11 @@ export function NotificationsProvider({ children }) {
       const now = new Date().toISOString();
       const chosen = ids ? new Set(ids) : null;
       setItems((current) =>
-        current?.map((n) => (!n.read_at && (!chosen || chosen.has(n.notification_id)) ? { ...n, read_at: now } : n))
+        current && current.map((n) => (!n.read_at && (!chosen || chosen.has(n.notification_id)) ? { ...n, read_at: now } : n))
       );
       const body = await notificationsApi.markRead(ids);
       setUnread(body.unread);
+      setVersion((v) => v + 1);
       return body;
     },
     [notificationsApi]
@@ -161,9 +163,10 @@ export function NotificationsProvider({ children }) {
 
   const markUnread = useCallback(
     async (id) => {
-      setItems((current) => current?.map((n) => (n.notification_id === id ? { ...n, read_at: null } : n)));
+      setItems((current) => current && current.map((n) => (n.notification_id === id ? { ...n, read_at: null } : n)));
       const body = await notificationsApi.markUnread(id);
       setUnread(body.unread);
+      setVersion((v) => v + 1);
       return body;
     },
     [notificationsApi]

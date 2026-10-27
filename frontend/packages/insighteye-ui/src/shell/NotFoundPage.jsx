@@ -1,22 +1,26 @@
 import { Link as RouterLink } from "react-router-dom";
+import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
-import SearchOffIcon from "@mui/icons-material/SearchOff";
+import Typography from "@mui/material/Typography";
 import { useTranslation } from "react-i18next";
-import { EmptyState } from "../components/DataStates";
 
 export function NotFoundPage() {
   const { t } = useTranslation("common");
   return (
-    <EmptyState
-      icon={<SearchOffIcon fontSize="inherit" />}
-      title={t("notFound.title")}
-      description={t("notFound.body")}
-      action={
-        <Button component={RouterLink} to="/" variant="contained">
-          {t("notFound.home")}
-        </Button>
-      }
-    />
+    <Box sx={{ textAlign: "center", py: 10 }}>
+      <Typography variant="h3" sx={{ fontWeight: 800 }}>
+        404
+      </Typography>
+      <Typography variant="h6" sx={{ mt: 1 }}>
+        {t("notFound.title")}
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 1, mb: 3 }}>
+        {t("notFound.body")}
+      </Typography>
+      <Button variant="contained" component={RouterLink} to="/">
+        {t("notFound.home")}
+      </Button>
+    </Box>
   );
 }
 

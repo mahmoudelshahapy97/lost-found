@@ -122,7 +122,7 @@
     "changeTitle": "Change password",
     "current": "Current password",
     "new": "New password",
-    "confirm": "Confirm new password",
+    "confirm": "Repeat new password",
     "hint": "At least 8 characters, with upper, lower, a digit and a symbol.",
     "mismatch": "The passwords do not match",
     "changed": "Password changed. Please log in again.",
@@ -135,15 +135,15 @@
   },
   "reset": {
     "title": "Reset your password",
-    "intro": "Enter the email address of your account and we'll send you a reset code.",
+    "intro": "Enter the email address of your account and we will send you a code to set a new password.",
     "sendCode": "Send code",
     "sending": "Sending…",
     "codeSent": "If that address belongs to an account, a 6-digit code is on its way. It expires in a few minutes.",
     "sendFailed": "Could not send the code",
-    "code": "6-digit code",
+    "code": "Code from the email",
     "otherEmail": "Use a different email",
-    "reset": "Reset password",
-    "resetting": "Resetting…",
+    "reset": "Set new password",
+    "resetting": "Saving…",
     "resend": "Resend code",
     "resendIn": "Resend code in {{seconds}}s",
     "done": "Password changed — sign in with your new password.",
@@ -185,7 +185,9 @@
       "camera_offline": "Camera offline",
       "camera_online": "Camera back online",
       "system": "System"
-    }
+    },
+    "sendTest": "Send a test",
+    "testSent": "Test notification sent — it should appear in the bell within a second."
   },
   "filters": {
     "period": "Period",
@@ -205,7 +207,15 @@
     "displayedRows": "{{from}}–{{to}} of {{count}}"
   },
   "time": {
-    "weekdaysShort": ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    "weekdaysShort": [
+      "Sun",
+      "Mon",
+      "Tue",
+      "Wed",
+      "Thu",
+      "Fri",
+      "Sat"
+    ]
   },
   "units": {
     "events_one": "{{count}} event",
@@ -272,8 +282,8 @@
     }
   },
   "notFound": {
-    "title": "Page not found",
-    "body": "That address does not match any page in this console.",
-    "home": "Go to the dashboard"
+    "title": "That page does not exist",
+    "body": "The link may be stale, or what it pointed at was deleted.",
+    "home": "Back to the dashboard"
   }
 }

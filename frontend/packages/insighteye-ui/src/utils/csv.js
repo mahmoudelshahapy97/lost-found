@@ -14,7 +14,7 @@ export function toCsv(rows, columns) {
   const head = columns.map((c) => cell(c.label)).join(",");
   const body = rows.map((row) => columns.map((c) => cell(c.value ? c.value(row) : row[c.key])).join(","));
   // BOM: Excel otherwise reads UTF-8 (Arabic names) as Windows-1252.
-  return `﻿${[head, ...body].join("\r\n")}`;
+  return `\uFEFF${[head, ...body].join("\r\n")}`;
 }
 
 /** Save a Blob (or CSV text) under `filename`. */
