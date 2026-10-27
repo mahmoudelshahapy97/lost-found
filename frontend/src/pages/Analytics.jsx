@@ -40,10 +40,12 @@ import dayjs from "dayjs";
 import { analytics, cameras } from "../api/endpoints";
 import { useAsync } from "../hooks/useAsync";
 import { EmptyState, ErrorState, Loading } from "../components/DataStates";
-import HourHeatmap from "../components/HourHeatmap";
+import { HourHeatmap } from "@insighteye/ui";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
 import { formatDuration, formatNumber, formatScore, titleCase } from "../utils/format";
+import { useTranslation } from "react-i18next";
+import i18n from "i18next";
 
 ChartJS.register(
   CategoryScale,
@@ -57,10 +59,10 @@ ChartJS.register(
 );
 
 const WINDOWS = [
-  { value: 1, label: "Last 24 hours" },
-  { value: 7, label: "Last 7 days" },
-  { value: 30, label: "Last 30 days" },
-  { value: 90, label: "Last 90 days" },
+  { value: 1, get label() { return i18n.t("analytics.last24Hours"); } },
+  { value: 7, get label() { return i18n.t("analytics.last7Days"); } },
+  { value: 30, get label() { return i18n.t("analytics.last30Days"); } },
+  { value: 90, get label() { return i18n.t("analytics.last90Days"); } },
 ];
 
 // The busiest cameras are the story; the long tail stays in the table below.
@@ -123,6 +125,7 @@ function Funnel({ stages }) {
  * alerts in the window, with operator verdicts standing in for ground truth.
  */
 function ConfidenceAudit({ audit, baseOptions, theme, dismissed }) {
+  const { t } = useTranslation();
   const summary = audit.summary;
 
   const histogram = useMemo(() => {
@@ -133,13 +136,13 @@ function ConfidenceAudit({ audit, baseOptions, theme, dismissed }) {
         labels: buckets.map((bucket) => `${Math.round(bucket.min * 100)}–${Math.round(bucket.max * 100)}%`),
         datasets: [
           {
-            label: "Alerts",
+            label: t("analytics.alerts"),
             data: buckets.map((bucket) => bucket.count - bucket.false_positives),
             backgroundColor: theme.palette.primary.main,
             ...segment,
           },
           {
-            label: "False positives",
+            label: t("analytics.falsePositives"),
             data: buckets.map((bucket) => bucket.false_positives),
             backgroundColor: dismissed,
             ...segment,
@@ -160,40 +163,38 @@ function ConfidenceAudit({ audit, baseOptions, theme, dismissed }) {
         },
       },
     };
-  }, [audit, baseOptions, theme, dismissed]);
+  }, [audit, baseOptions, theme, dismissed, t]);
 
   if (!summary.scored_events) {
     return (
-      <ChartCard title="Model confidence audit" subtitle="No scored alerts in this window">
+      <ChartCard title={t("analytics.modelConfidenceAudit")} subtitle={t("analytics.noScoredAlertsInThis")}>
         <Typography variant="body2" color="text.secondary">
-          Alerts recorded without a detector confidence are left out of the audit.
+          {t("analytics.alertsRecordedWithoutADetector")}
         </Typography>
       </ChartCard>
     );
   }
 
   const facts = [
-    { label: "Average confidence", value: formatScore(summary.avg_confidence) },
+    { label: t("analytics.averageConfidence"), value: formatScore(summary.avg_confidence) },
     {
-      label: "Range",
+      label: t("analytics.range"),
       value: `${formatScore(summary.min_confidence, 0)} – ${formatScore(summary.max_confidence, 0)}`,
     },
     {
-      label: `Below ${formatScore(summary.low_confidence_cutoff, 0)}`,
+      label: t("analytics.belowV0", { v0: formatScore(summary.low_confidence_cutoff, 0) }),
       value: `${formatNumber(summary.low_confidence)} (${formatPct(summary.low_confidence_pct)})`,
     },
-    { label: "Avg on resolved", value: formatScore(summary.avg_confidence_resolved) },
-    { label: "Avg on false positives", value: formatScore(summary.avg_confidence_false_positive) },
+    { label: t("analytics.avgOnResolved"), value: formatScore(summary.avg_confidence_resolved) },
+    { label: t("analytics.avgOnFalsePositives"), value: formatScore(summary.avg_confidence_false_positive) },
   ];
 
   return (
     <Card>
       <CardContent>
-        <Typography variant="subtitle2">Model confidence audit</Typography>
+        <Typography variant="subtitle2">{t("analytics.modelConfidenceAudit")}</Typography>
         <Typography variant="caption" color="text.secondary">
-          Detector confidence of {formatNumber(summary.scored_events)} scored alerts. Operator
-          verdicts stand in for ground truth: false positives clustering at low confidence point to
-          the threshold, high-confidence ones to the scene.
+          {t("analytics.detectorConfidenceOfV0Scored", { v0: formatNumber(summary.scored_events) })}
         </Typography>
         <Grid container spacing={3} sx={{ mt: 1 }}>
           <Grid size={{ xs: 12, lg: 8 }}>
@@ -214,8 +215,7 @@ function ConfidenceAudit({ audit, baseOptions, theme, dismissed }) {
                 </Stack>
               ))}
               <Typography variant="caption" color="text.disabled">
-                Detector threshold {formatScore(summary.threshold, 0)}; the tracker decides which
-                detections start a track.
+                {t("analytics.detectorThresholdV0TheTracker", { v0: formatScore(summary.threshold, 0) })}
               </Typography>
             </Stack>
           </Grid>
@@ -225,18 +225,18 @@ function ConfidenceAudit({ audit, baseOptions, theme, dismissed }) {
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell>Camera</TableCell>
-              <TableCell align="right">Scored alerts</TableCell>
-              <TableCell align="right">Avg</TableCell>
-              <TableCell align="right">Min – max</TableCell>
-              <TableCell align="right">Low confidence</TableCell>
-              <TableCell align="right">False positives</TableCell>
+              <TableCell>{t("analytics.camera")}</TableCell>
+              <TableCell align="right">{t("analytics.scoredAlerts")}</TableCell>
+              <TableCell align="right">{t("analytics.avg")}</TableCell>
+              <TableCell align="right">{t("analytics.minMax")}</TableCell>
+              <TableCell align="right">{t("analytics.lowConfidence")}</TableCell>
+              <TableCell align="right">{t("analytics.falsePositives")}</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {audit.by_camera.map((row) => (
               <TableRow key={row.camera_id || "deleted"} hover>
-                <TableCell>{row.camera_name || "Deleted camera"}</TableCell>
+                <TableCell>{row.camera_name || t("analytics.deletedCamera")}</TableCell>
                 <TableCell align="right">{formatNumber(row.events)}</TableCell>
                 <TableCell align="right">{formatScore(row.avg_confidence)}</TableCell>
                 <TableCell align="right">
@@ -256,6 +256,7 @@ function ConfidenceAudit({ audit, baseOptions, theme, dismissed }) {
 }
 
 export default function Analytics() {
+  const { t } = useTranslation();
   const theme = useTheme();
   const [days, setDays] = useState(7);
   const [cameraId, setCameraId] = useState("");
@@ -335,7 +336,7 @@ export default function Analytics() {
         ),
         datasets: [
           {
-            label: "Alerts",
+            label: t("analytics.alerts"),
             data: points.map((point) => point.events),
             borderColor: theme.palette.primary.main,
             backgroundColor: theme.palette.primary.main + "22",
@@ -349,7 +350,7 @@ export default function Analytics() {
             pointHoverBorderColor: theme.palette.background.paper,
           },
           {
-            label: "False positives",
+            label: t("analytics.falsePositives"),
             data: points.map((point) => point.false_positives),
             borderColor: dismissed,
             backgroundColor: dismissed,
@@ -391,7 +392,7 @@ export default function Analytics() {
         },
       },
     };
-  }, [summary, hourly, theme, baseOptions, dismissed]);
+  }, [summary, hourly, theme, baseOptions, dismissed, t]);
 
   const byCamera = useMemo(() => {
     const rows = (summary?.by_camera || []).slice(0, CAMERA_CHART_LIMIT);
@@ -406,16 +407,16 @@ export default function Analytics() {
     return {
       height: Math.max(160, rows.length * 30 + 48),
       data: {
-        labels: rows.map((row) => row.camera_name || "Deleted camera"),
+        labels: rows.map((row) => row.camera_name || t("analytics.deletedCamera")),
         datasets: [
           {
-            label: "Alerts",
+            label: t("analytics.alerts"),
             data: rows.map((row) => row.events - row.false_positives),
             backgroundColor: theme.palette.primary.main,
             ...segment,
           },
           {
-            label: "False positives",
+            label: t("analytics.falsePositives"),
             data: rows.map((row) => row.false_positives),
             backgroundColor: dismissed,
             ...segment,
@@ -432,7 +433,7 @@ export default function Analytics() {
         },
       },
     };
-  }, [summary, theme, baseOptions, dismissed]);
+  }, [summary, theme, baseOptions, dismissed, t]);
 
   const byClass = useMemo(() => {
     const rows = summary?.by_class || [];
@@ -442,7 +443,7 @@ export default function Analytics() {
         labels: rows.map((row) => titleCase(row.class_name)),
         datasets: [
           {
-            label: "Alerts",
+            label: t("analytics.alerts"),
             data: rows.map((row) => row.events),
             backgroundColor: theme.palette.primary.main,
             borderRadius: 4,
@@ -465,22 +466,22 @@ export default function Analytics() {
                 const row = rows[item.dataIndex];
                 const confidence =
                   row.avg_confidence === null ? "—" : `${(row.avg_confidence * 100).toFixed(0)}%`;
-                return `avg confidence ${confidence} · ${row.false_positives} false positive${row.false_positives === 1 ? "" : "s"}`;
+                return t("analytics.cameraTooltip", { confidence, count: row.false_positives });
               },
             },
           },
         },
       },
     };
-  }, [summary, theme, baseOptions]);
+  }, [summary, theme, baseOptions, t]);
 
   const funnel = summary?.funnel;
   const funnelStages = funnel
     ? [
-        { key: "detected", label: "Alerts raised", value: funnel.events_detected },
+        { key: "detected", label: t("analytics.alertsRaised"), value: funnel.events_detected },
         {
           key: "harvested",
-          label: "Added to found gallery",
+          label: t("analytics.addedToFoundGallery"),
           value: funnel.items_harvested,
           caption: funnel.events_detected
             ? `${formatPct(share(funnel.items_harvested, funnel.events_detected))} of alerts`
@@ -488,13 +489,13 @@ export default function Analytics() {
         },
         {
           key: "reports",
-          label: "Lost reports filed",
+          label: t("analytics.lostReportsFiled"),
           value: funnel.reports_filed,
-          caption: cameraId ? "All cameras — a report is not tied to one" : null,
+          caption: cameraId ? t("analytics.reportsNotPerCamera") : null,
         },
         {
           key: "reunions",
-          label: "Reunited with owner",
+          label: t("analytics.reunitedWithOwner"),
           value: funnel.reunions,
           caption: funnel.reports_filed
             ? `${formatPct(share(funnel.reunions, funnel.reports_filed))} of reports`
@@ -508,19 +509,19 @@ export default function Analytics() {
   return (
     <Box>
       <PageHeader
-        title="Analytics"
-        subtitle={`What the cameras flagged, when, where, and how much of it got back to its owner. Times in ${TIMEZONE}.`}
+        title={t("analytics.analytics")}
+        subtitle={t("analytics.whatTheCamerasFlaggedWhen", { TIMEZONE })}
         actions={
           <>
             <TextField
               select
               size="small"
-              label="Camera"
+              label={t("analytics.camera")}
               value={cameraId}
               onChange={(event) => setCameraId(event.target.value)}
               sx={{ minWidth: 200 }}
             >
-              <MenuItem value="">All cameras</MenuItem>
+              <MenuItem value="">{t("analytics.allCameras")}</MenuItem>
               {(cameraList.data || []).map((camera) => (
                 <MenuItem key={camera.camera_id} value={camera.camera_id}>
                   {camera.name}
@@ -530,7 +531,7 @@ export default function Analytics() {
             <TextField
               select
               size="small"
-              label="Window"
+              label={t("analytics.window")}
               value={days}
               onChange={(event) => setDays(Number(event.target.value))}
               sx={{ minWidth: 160 }}
@@ -545,49 +546,49 @@ export default function Analytics() {
         }
       />
 
-      <ErrorState error={error} onRetry={refresh} title="Could not load analytics" />
+      <ErrorState error={error} onRetry={refresh} title={t("analytics.couldNotLoadAnalytics")} />
 
       {!summary && loading ? (
-        <Loading label="Aggregating…" height={360} />
+        <Loading label={t("analytics.aggregating")} height={360} />
       ) : summary ? (
         // A refetch dims the previous numbers instead of blanking the page.
         <Box sx={{ opacity: loading ? 0.55 : 1, transition: "opacity 150ms" }}>
           <Grid container spacing={2} sx={{ mb: 2 }}>
             <Grid size={{ xs: 6, md: 3 }}>
               <StatCard
-                label="Alerts"
+                label={t("analytics.alerts")}
                 value={formatNumber(kpis.events)}
-                hint={`${formatNumber(kpis.open)} still open`}
+                hint={t("analytics.v0StillOpen", { v0: formatNumber(kpis.open) })}
                 icon={<NotificationsIcon />}
                 color="warning"
               />
             </Grid>
             <Grid size={{ xs: 6, md: 3 }}>
               <StatCard
-                label="False-positive rate"
+                label={t("analytics.falsePositiveRate")}
                 value={formatPct(kpis.false_positive_pct)}
-                hint={`${formatNumber(kpis.false_positives)} dismissed`}
+                hint={t("analytics.v0Dismissed", { v0: formatNumber(kpis.false_positives) })}
                 icon={<BlockIcon />}
                 color="secondary"
               />
             </Grid>
             <Grid size={{ xs: 6, md: 3 }}>
               <StatCard
-                label="Items reunited"
+                label={t("analytics.itemsReunited")}
                 value={formatNumber(kpis.reunions)}
-                hint={`of ${formatNumber(kpis.lost_reports)} reports filed`}
+                hint={t("analytics.ofV0ReportsFiled", { v0: formatNumber(kpis.lost_reports) })}
                 icon={<HandshakeIcon />}
                 color="success"
               />
             </Grid>
             <Grid size={{ xs: 6, md: 3 }}>
               <StatCard
-                label="Median time to reunite"
+                label={t("analytics.medianTimeToReunite")}
                 value={formatDuration(kpis.median_reunite_s)}
                 hint={
                   kpis.fastest_reunite_s !== null
-                    ? `fastest ${formatDuration(kpis.fastest_reunite_s)}`
-                    : "no reunions in this window"
+                    ? t("analytics.fastestV0", { v0: formatDuration(kpis.fastest_reunite_s) })
+                    : t("analytics.noReunionsInThisWindow")
                 }
                 icon={<TimerIcon />}
                 color="info"
@@ -598,16 +599,16 @@ export default function Analytics() {
           {!hasEvents ? (
             <Card>
               <EmptyState
-                title={`No alerts in the ${windowLabel}`}
-                description="Nothing was left unattended long enough to raise an alert. Try a longer window or another camera."
+                title={t("analytics.noAlertsInTheWindowlabel", { windowLabel })}
+                description={t("analytics.nothingWasLeftUnattendedLong")}
               />
             </Card>
           ) : (
             <Grid container spacing={2}>
               <Grid size={12}>
                 <ChartCard
-                  title={hourly ? "Alerts per hour" : "Alerts per day"}
-                  subtitle={`${formatNumber(kpis.events)} alerts, ${formatNumber(kpis.false_positives)} dismissed as false positives`}
+                  title={hourly ? t("analytics.alertsPerHour") : t("analytics.alertsPerDay")}
+                  subtitle={t("analytics.v0AlertsV1DismissedAs", { v0: formatNumber(kpis.events), v1: formatNumber(kpis.false_positives) })}
                 >
                   <Box sx={{ height: 280 }}>
                     <Line data={trend.data} options={trend.options} />
@@ -617,11 +618,11 @@ export default function Analytics() {
 
               <Grid size={{ xs: 12, lg: 6 }}>
                 <ChartCard
-                  title="By camera"
+                  title={t("analytics.byCamera")}
                   subtitle={
                     summary.by_camera.length > CAMERA_CHART_LIMIT
-                      ? `Top ${CAMERA_CHART_LIMIT} of ${summary.by_camera.length} — every camera is in the table below`
-                      : "Valid alerts and false positives per camera"
+                      ? t("analytics.topCameraChartLimitOf", { CAMERA_CHART_LIMIT, length: summary.by_camera.length })
+                      : t("analytics.validAlertsAndFalsePositives")
                   }
                 >
                   <Box sx={{ height: byCamera.height }}>
@@ -631,7 +632,7 @@ export default function Analytics() {
               </Grid>
 
               <Grid size={{ xs: 12, lg: 6 }}>
-                <ChartCard title="By object type" subtitle="Alerts per detected class">
+                <ChartCard title={t("analytics.byObjectType")} subtitle={t("analytics.alertsPerDetectedClass")}>
                   <Box sx={{ height: byClass.height }}>
                     <Bar data={byClass.data} options={byClass.options} />
                   </Box>
@@ -640,15 +641,15 @@ export default function Analytics() {
 
               <Grid size={{ xs: 12, lg: 8 }}>
                 <ChartCard
-                  title="When items are left"
-                  subtitle="Alerts by weekday and hour of day — hover a cell for the count"
+                  title={t("analytics.whenItemsAreLeft")}
+                  subtitle={t("analytics.alertsByWeekdayAndHour")}
                 >
-                  <HourHeatmap cells={summary.heatmap} />
+                  <HourHeatmap cells={summary.heatmap} valueKey="events" describe={(n) => t("analytics.alertCount", { count: n })} />
                 </ChartCard>
               </Grid>
 
               <Grid size={{ xs: 12, lg: 4 }}>
-                <ChartCard title="Reunion funnel" subtitle={`Over the ${windowLabel}`}>
+                <ChartCard title={t("analytics.reunionFunnel")} subtitle={t("analytics.overTheWindowlabel", { windowLabel })}>
                   <Funnel stages={funnelStages} />
                 </ChartCard>
               </Grid>
@@ -665,7 +666,7 @@ export default function Analytics() {
                   <ErrorState
                     error={audit.error}
                     onRetry={audit.refresh}
-                    title="Could not load the confidence audit"
+                    title={t("analytics.couldNotLoadTheConfidence")}
                   />
                 )}
               </Grid>
@@ -673,22 +674,21 @@ export default function Analytics() {
               <Grid size={12}>
                 <Card>
                   <CardContent sx={{ pb: 0 }}>
-                    <Typography variant="subtitle2">Camera breakdown</Typography>
+                    <Typography variant="subtitle2">{t("analytics.cameraBreakdown")}</Typography>
                     <Typography variant="caption" color="text.secondary">
-                      Unattended is how long an object sat still with no owner before the alert
-                      fired.
+                      {t("analytics.unattendedIsHowLongAn")}
                     </Typography>
                   </CardContent>
                   <TableContainer>
                     <Table size="small">
                       <TableHead>
                         <TableRow>
-                          <TableCell>Camera</TableCell>
-                          <TableCell>Location</TableCell>
-                          <TableCell align="right">Alerts</TableCell>
-                          <TableCell align="right">Open</TableCell>
-                          <TableCell align="right">False positives</TableCell>
-                          <TableCell align="right">Avg unattended</TableCell>
+                          <TableCell>{t("analytics.camera")}</TableCell>
+                          <TableCell>{t("analytics.location")}</TableCell>
+                          <TableCell align="right">{t("analytics.alerts")}</TableCell>
+                          <TableCell align="right">{t("analytics.open")}</TableCell>
+                          <TableCell align="right">{t("analytics.falsePositives")}</TableCell>
+                          <TableCell align="right">{t("analytics.avgUnattended")}</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
@@ -701,7 +701,7 @@ export default function Analytics() {
                                 to={`/cameras/${row.camera_id}`}
                                 sx={{ p: 0, minWidth: 0 }}
                               >
-                                {row.camera_name || "Deleted camera"}
+                                {row.camera_name || t("analytics.deletedCamera")}
                               </Button>
                             </TableCell>
                             <TableCell>{row.location || "—"}</TableCell>

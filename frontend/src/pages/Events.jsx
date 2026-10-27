@@ -23,6 +23,7 @@ import PageHeader from "../components/PageHeader";
 import { EmptyState, ErrorState, Loading } from "../components/DataStates";
 import { EventStatusChip } from "../components/StatusChips";
 import { cameras as cameraApi, events as eventApi } from "../api/endpoints";
+import { ExportButton } from "@insighteye/ui";
 import { useAsync } from "../hooks/useAsync";
 import { usePolling } from "../hooks/usePolling";
 import {
@@ -33,6 +34,7 @@ import {
   POLL_INTERVAL_MS,
 } from "../utils/constants";
 import { formatDateTime, formatScore, fromNow, titleCase } from "../utils/format";
+import { useTranslation } from "react-i18next";
 
 /**
  * Filters live in the query string rather than in component state, so a
@@ -42,6 +44,7 @@ import { formatDateTime, formatScore, fromNow, titleCase } from "../utils/format
 const ALERTS_POLL_MS = POLL_INTERVAL_MS * 2;
 
 export default function Events() {
+  const { t } = useTranslation();
   const [params, setParams] = useSearchParams();
 
   const status = params.get("status") || "";
@@ -83,11 +86,22 @@ export default function Events() {
   return (
     <Box>
       <PageHeader
-        title="Alerts"
-        subtitle={`Every object a camera worker declared abandoned, newest first. Updates every ${Math.round(ALERTS_POLL_MS / 1000)} s.`}
+        title={t("events.alerts")}
+        subtitle={t("events.everyObjectACameraWorker", { v0: Math.round(ALERTS_POLL_MS / 1000) })}
         actions={[
+          <ExportButton
+            key="export"
+            fetchBlob={() =>
+              eventApi.exportBlob({
+                status: status || undefined,
+                class_name: className || undefined,
+                camera_id: cameraId || undefined,
+              })
+            }
+            filenameStem="alerts"
+          />,
           <Button key="refresh" onClick={refresh} startIcon={<RefreshIcon />}>
-            Refresh
+            {t("events.refresh")}
           </Button>,
         ]}
       />
@@ -96,13 +110,13 @@ export default function Events() {
         <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
           <TextField
             select
-            label="Status"
+            label={t("events.status")}
             size="small"
             value={status}
             onChange={(event) => setParam("status", event.target.value)}
             sx={{ minWidth: 180 }}
           >
-            <MenuItem value="">All statuses</MenuItem>
+            <MenuItem value="">{t("events.allStatuses")}</MenuItem>
             {EVENT_STATUSES.map((value) => (
               <MenuItem key={value} value={value}>
                 {titleCase(value)}
@@ -112,13 +126,13 @@ export default function Events() {
 
           <TextField
             select
-            label="Object"
+            label={t("events.object")}
             size="small"
             value={className}
             onChange={(event) => setParam("class_name", event.target.value)}
             sx={{ minWidth: 180 }}
           >
-            <MenuItem value="">All objects</MenuItem>
+            <MenuItem value="">{t("events.allObjects")}</MenuItem>
             {OBJECT_CLASSES.map((value) => (
               <MenuItem key={value} value={value}>
                 {titleCase(value)}
@@ -128,13 +142,13 @@ export default function Events() {
 
           <TextField
             select
-            label="Camera"
+            label={t("events.camera")}
             size="small"
             value={cameraId}
             onChange={(event) => setParam("camera_id", event.target.value)}
             sx={{ minWidth: 220 }}
           >
-            <MenuItem value="">All cameras</MenuItem>
+            <MenuItem value="">{t("events.allCameras")}</MenuItem>
             {(cameraList.data || []).map((camera) => (
               <MenuItem key={camera.camera_id} value={camera.camera_id}>
                 {camera.name}
@@ -144,7 +158,7 @@ export default function Events() {
 
           <Box sx={{ flex: 1 }} />
           {hasFilters ? (
-            <Button onClick={() => setParams(new URLSearchParams())}>Clear filters</Button>
+            <Button onClick={() => setParams(new URLSearchParams())}>{t("events.clearFilters")}</Button>
           ) : null}
         </Stack>
       </Card>
@@ -152,19 +166,19 @@ export default function Events() {
       <ErrorState error={error} onRetry={refresh} />
 
       {loading && !data ? (
-        <Loading label="Loading alerts…" />
+        <Loading label={t("events.loadingAlerts")} />
       ) : rows.length ? (
         <Card>
           <TableContainer>
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell>Object</TableCell>
-                  <TableCell>Camera</TableCell>
-                  <TableCell>Abandoned</TableCell>
-                  <TableCell align="right">Confidence</TableCell>
-                  <TableCell>Colour</TableCell>
-                  <TableCell>Status</TableCell>
+                  <TableCell>{t("events.object")}</TableCell>
+                  <TableCell>{t("events.camera")}</TableCell>
+                  <TableCell>{t("events.abandoned")}</TableCell>
+                  <TableCell align="right">{t("events.confidence")}</TableCell>
+                  <TableCell>{t("events.colour")}</TableCell>
+                  <TableCell>{t("events.status")}</TableCell>
                   <TableCell align="right" />
                 </TableRow>
               </TableHead>
@@ -190,7 +204,7 @@ export default function Events() {
                           color="text.secondary"
                           variant="body2"
                         >
-                          {event.camera_name || "Unnamed"}
+                          {event.camera_name || t("events.unnamed")}
                         </Link>
                       ) : (
                         <Typography variant="body2" color="text.disabled">
@@ -218,7 +232,7 @@ export default function Events() {
                     </TableCell>
                     <TableCell align="right">
                       <Button size="small" component={RouterLink} to={`/events/${event.event_id}`}>
-                        Review
+                        {t("events.review")}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -240,21 +254,21 @@ export default function Events() {
       ) : (
         <Card>
           <EmptyState
-            title={hasFilters ? "Nothing matches these filters" : "No alerts yet"}
+            title={hasFilters ? t("events.nothingMatchesTheseFilters") : t("events.noAlertsYet")}
             description={
               hasFilters
-                ? "Try widening the status, object or camera filter."
-                : "Alerts appear here as soon as a worker declares an object abandoned."
+                ? t("events.tryWideningTheStatusObject")
+                : t("events.alertsAppearHereAsSoon")
             }
             icon={<NotificationsIcon fontSize="inherit" />}
             action={
               hasFilters ? (
                 <Button variant="outlined" onClick={() => setParams(new URLSearchParams())}>
-                  Clear filters
+                  {t("events.clearFilters")}
                 </Button>
               ) : (
                 <Button variant="outlined" component={RouterLink} to="/cameras">
-                  Check cameras
+                  {t("events.checkCameras")}
                 </Button>
               )
             }

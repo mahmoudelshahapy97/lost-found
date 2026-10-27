@@ -28,12 +28,14 @@ import { useAuth } from "../auth/AuthContext";
 import { useAsync } from "../hooks/useAsync";
 import { FOUND_STATUS, FOUND_STATUSES, PAGE_SIZE_OPTIONS } from "../utils/constants";
 import { formatDateTime, fromNow, titleCase } from "../utils/format";
+import { useTranslation } from "react-i18next";
 
 /**
  * The gallery is a grid rather than a table: these rows are pictures, and the
  * picture is the thing an operator is actually comparing against a report.
  */
 export default function FoundItems() {
+  const { t } = useTranslation();
   const [params, setParams] = useSearchParams();
   const toast = useToast();
   const { hasRole } = useAuth();
@@ -73,8 +75,8 @@ export default function FoundItems() {
       await foundApi.setStatus(found.found_id, nextStatus);
       toast.success(
         nextStatus === FOUND_STATUS.DISCARDED
-          ? `${titleCase(found.class_name)} discarded from the gallery.`
-          : `${titleCase(found.class_name)} restored as unclaimed.`
+          ? t("foundItems.v0DiscardedFromTheGallery", { v0: titleCase(found.class_name) })
+          : t("foundItems.v0RestoredAsUnclaimed", { v0: titleCase(found.class_name) })
       );
       refresh();
     } catch (err) {
@@ -92,11 +94,11 @@ export default function FoundItems() {
   return (
     <Box>
       <PageHeader
-        title="Found gallery"
-        subtitle="Every object harvested from an alert. Use Search to filter by camera, date and time."
+        title={t("foundItems.foundGallery")}
+        subtitle={t("foundItems.everyObjectHarvestedFromAn")}
         actions={[
           <Button key="refresh" onClick={refresh} startIcon={<RefreshIcon />}>
-            Refresh
+            {t("foundItems.refresh")}
           </Button>,
         ]}
       />
@@ -105,13 +107,13 @@ export default function FoundItems() {
         <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
           <TextField
             select
-            label="Status"
+            label={t("foundItems.status")}
             size="small"
             value={status}
             onChange={(event) => setParam("status", event.target.value)}
             sx={{ minWidth: 180 }}
           >
-            <MenuItem value="">All statuses</MenuItem>
+            <MenuItem value="">{t("foundItems.allStatuses")}</MenuItem>
             {FOUND_STATUSES.map((value) => (
               <MenuItem key={value} value={value}>
                 {titleCase(value)}
@@ -121,13 +123,13 @@ export default function FoundItems() {
 
           <TextField
             select
-            label="Camera"
+            label={t("foundItems.camera")}
             size="small"
             value={cameraId}
             onChange={(event) => setParam("camera_id", event.target.value)}
             sx={{ minWidth: 220 }}
           >
-            <MenuItem value="">All cameras</MenuItem>
+            <MenuItem value="">{t("foundItems.allCameras")}</MenuItem>
             {(cameraList.data || []).map((camera) => (
               <MenuItem key={camera.camera_id} value={camera.camera_id}>
                 {camera.name}
@@ -137,7 +139,7 @@ export default function FoundItems() {
 
           <Box sx={{ flex: 1 }} />
           {hasFilters ? (
-            <Button onClick={() => setParams(new URLSearchParams())}>Clear filters</Button>
+            <Button onClick={() => setParams(new URLSearchParams())}>{t("foundItems.clearFilters")}</Button>
           ) : null}
         </Stack>
       </Card>
@@ -145,7 +147,7 @@ export default function FoundItems() {
       <ErrorState error={error} onRetry={refresh} />
 
       {loading && !data ? (
-        <Loading label="Loading the gallery…" />
+        <Loading label={t("foundItems.loadingTheGallery")} />
       ) : items.length ? (
         <>
           <Grid container spacing={2}>
@@ -154,9 +156,9 @@ export default function FoundItems() {
                 <Card sx={{ height: "100%" }} data-testid="found-card" data-found-id={found.found_id}>
                   <ItemImage
                     src={foundApi.cropUrl(found.found_id)}
-                    alt={`Found ${found.class_name}`}
+                    alt={t("foundItems.foundClassName", { class_name: found.class_name })}
                     height={180}
-                    fallbackLabel="No crop stored"
+                    fallbackLabel={t("foundItems.noCrop")}
                   />
                   <CardContent>
                     <Stack
@@ -171,7 +173,7 @@ export default function FoundItems() {
 
                     <Tooltip title={formatDateTime(found.found_at)}>
                       <Typography variant="caption" color="text.secondary" display="block">
-                        Found {fromNow(found.found_at)}
+                        {t("foundItems.foundV0", { v0: fromNow(found.found_at) })}
                       </Typography>
                     </Tooltip>
 
@@ -183,10 +185,10 @@ export default function FoundItems() {
                           underline="hover"
                           color="inherit"
                         >
-                          {found.camera_name || "Unnamed camera"}
+                          {found.camera_name || t("foundItems.unnamedCamera")}
                         </Link>
                       ) : (
-                        "Camera deleted"
+                        t("foundItems.cameraDeleted")
                       )}
                     </Typography>
 
@@ -201,7 +203,7 @@ export default function FoundItems() {
                           clickable
                           component={RouterLink}
                           to={`/events/${found.event_id}`}
-                          label="View alert"
+                          label={t("foundItems.viewAlert")}
                         />
                       ) : null}
                       {canEdit && found.status === FOUND_STATUS.UNCLAIMED ? (
@@ -211,7 +213,7 @@ export default function FoundItems() {
                           clickable
                           disabled={busyId === found.found_id}
                           onClick={() => changeStatus(found, FOUND_STATUS.DISCARDED)}
-                          label="Discard"
+                          label={t("foundItems.discard")}
                         />
                       ) : null}
                       {canEdit && found.status === FOUND_STATUS.DISCARDED ? (
@@ -222,7 +224,7 @@ export default function FoundItems() {
                           clickable
                           disabled={busyId === found.found_id}
                           onClick={() => changeStatus(found, FOUND_STATUS.UNCLAIMED)}
-                          label="Restore"
+                          label={t("foundItems.restore")}
                         />
                       ) : null}
                     </Stack>
@@ -247,17 +249,17 @@ export default function FoundItems() {
       ) : (
         <Card>
           <EmptyState
-            title={hasFilters ? "Nothing matches these filters" : "The gallery is empty"}
-            description="Items land here automatically: every abandoned-object alert is cropped, and that crop becomes a searchable found item."
+            title={hasFilters ? t("foundItems.nothingMatchesTheseFilters") : t("foundItems.theGalleryIsEmpty")}
+            description={t("foundItems.itemsLandHereAutomaticallyEvery")}
             icon={<Inventory2Icon fontSize="inherit" />}
             action={
               hasFilters ? (
                 <Button variant="outlined" onClick={() => setParams(new URLSearchParams())}>
-                  Clear filters
+                  {t("foundItems.clearFilters")}
                 </Button>
               ) : (
                 <Button component={RouterLink} to="/events" variant="outlined">
-                  View alerts
+                  {t("foundItems.viewAlerts")}
                 </Button>
               )
             }

@@ -45,13 +45,15 @@ import {
   titleCase,
   toDateTimeLocal,
 } from "../utils/format";
+import { useTranslation } from "react-i18next";
+import i18n from "i18next";
 
 /** One-click ranges; the From/To fields stay editable afterwards. */
 const QUICK_RANGES = [
-  { label: "Last hour", from: () => dayjs().subtract(1, "hour") },
-  { label: "Today", from: () => dayjs().startOf("day") },
-  { label: "Last 24 h", from: () => dayjs().subtract(24, "hour") },
-  { label: "Last 7 days", from: () => dayjs().subtract(7, "day") },
+  { get label() { return i18n.t("search.lastHour"); }, from: () => dayjs().subtract(1, "hour") },
+  { get label() { return i18n.t("search.today"); }, from: () => dayjs().startOf("day") },
+  { get label() { return i18n.t("search.last24H"); }, from: () => dayjs().subtract(24, "hour") },
+  { get label() { return i18n.t("search.last7Days"); }, from: () => dayjs().subtract(7, "day") },
 ];
 
 const FILTER_KEYS = ["camera_id", "class_name", "color", "status", "start", "end"];
@@ -64,6 +66,7 @@ const FILTER_KEYS = ["camera_id", "class_name", "color", "status", "start", "end
  * reload and can be shared or linked to.
  */
 export default function Search() {
+  const { t } = useTranslation();
   const [params, setParams] = useSearchParams();
 
   const cameraId = params.get("camera_id") || "";
@@ -123,16 +126,16 @@ export default function Search() {
   return (
     <Box>
       <PageHeader
-        title="Search the found gallery"
-        subtitle="Filter every harvested item by camera, date and time, object type and colour."
+        title={t("search.searchTheFoundGallery")}
+        subtitle={t("search.filterEveryHarvestedItemBy")}
         actions={[
           hasFilters ? (
             <Button key="clear" onClick={clearFilters} startIcon={<ClearIcon />}>
-              Clear filters
+              {t("search.clearFilters")}
             </Button>
           ) : null,
           <Button key="refresh" onClick={refresh} startIcon={<RefreshIcon />}>
-            Refresh
+            {t("search.refresh")}
           </Button>,
         ].filter(Boolean)}
       />
@@ -142,13 +145,13 @@ export default function Search() {
           <Grid size={{ xs: 12, sm: 6, md: 4 }}>
             <TextField
               select
-              label="Camera"
+              label={t("search.camera")}
               size="small"
               fullWidth
               value={cameraId}
               onChange={(event) => setParam({ camera_id: event.target.value })}
             >
-              <MenuItem value="">All cameras</MenuItem>
+              <MenuItem value="">{t("search.allCameras")}</MenuItem>
               {(cameraList.data || []).map((camera) => (
                 <MenuItem key={camera.camera_id} value={camera.camera_id}>
                   {camera.name}
@@ -159,7 +162,7 @@ export default function Search() {
           <Grid size={{ xs: 12, sm: 6, md: 4 }}>
             <TextField
               type="datetime-local"
-              label="From"
+              label={t("search.from")}
               size="small"
               fullWidth
               value={toDateTimeLocal(start)}
@@ -170,7 +173,7 @@ export default function Search() {
           <Grid size={{ xs: 12, sm: 6, md: 4 }}>
             <TextField
               type="datetime-local"
-              label="To"
+              label={t("search.to")}
               size="small"
               fullWidth
               value={toDateTimeLocal(end)}
@@ -181,13 +184,13 @@ export default function Search() {
           <Grid size={{ xs: 12, sm: 6, md: 4 }}>
             <TextField
               select
-              label="Object type"
+              label={t("search.objectType")}
               size="small"
               fullWidth
               value={className}
               onChange={(event) => setParam({ class_name: event.target.value })}
             >
-              <MenuItem value="">Any type</MenuItem>
+              <MenuItem value="">{t("search.anyType")}</MenuItem>
               {OBJECT_CLASSES.map((value) => (
                 <MenuItem key={value} value={value}>
                   {titleCase(value)}
@@ -198,13 +201,13 @@ export default function Search() {
           <Grid size={{ xs: 12, sm: 6, md: 4 }}>
             <TextField
               select
-              label="Colour"
+              label={t("search.colour")}
               size="small"
               fullWidth
               value={color}
               onChange={(event) => setParam({ color: event.target.value })}
             >
-              <MenuItem value="">Any colour</MenuItem>
+              <MenuItem value="">{t("search.anyColour")}</MenuItem>
               {ITEM_COLORS.map((value) => (
                 <MenuItem key={value} value={value}>
                   {titleCase(value)}
@@ -215,13 +218,13 @@ export default function Search() {
           <Grid size={{ xs: 12, sm: 6, md: 4 }}>
             <TextField
               select
-              label="Status"
+              label={t("search.status")}
               size="small"
               fullWidth
               value={status}
               onChange={(event) => setParam({ status: event.target.value })}
             >
-              <MenuItem value="">All statuses</MenuItem>
+              <MenuItem value="">{t("search.allStatuses")}</MenuItem>
               {FOUND_STATUSES.map((value) => (
                 <MenuItem key={value} value={value}>
                   {titleCase(value)}
@@ -247,7 +250,7 @@ export default function Search() {
 
       {rangeInvalid ? (
         <Alert severity="warning" sx={{ mb: 2 }}>
-          &quot;From&quot; is after &quot;To&quot; — adjust the range to search.
+          {t("search.fromIsAfterToAdjust")}
         </Alert>
       ) : null}
 
@@ -257,7 +260,7 @@ export default function Search() {
         <Typography variant="body2" color="text.secondary">
           {data ? (
             <>
-              <strong>{total}</strong> {total === 1 ? "item" : "items"} found
+              <strong>{total}</strong> {total === 1 ? t("search.item") : t("search.items")} found
             </>
           ) : null}
         </Typography>
@@ -266,19 +269,19 @@ export default function Search() {
           exclusive
           value={view}
           onChange={(_, next) => next && setParam({ view: next === "cards" ? "" : next })}
-          aria-label="Result view"
+          aria-label={t("search.resultView")}
         >
-          <ToggleButton value="cards" aria-label="Cards">
+          <ToggleButton value="cards" aria-label={t("search.cards")}>
             <GridViewIcon fontSize="small" />
           </ToggleButton>
-          <ToggleButton value="table" aria-label="Table">
+          <ToggleButton value="table" aria-label={t("search.table")}>
             <TableRowsIcon fontSize="small" />
           </ToggleButton>
         </ToggleButtonGroup>
       </Stack>
 
       {loading && !data ? (
-        <Loading label="Searching…" />
+        <Loading label={t("search.searching")} />
       ) : items.length ? (
         <>
           {view === "cards" ? <ResultCards items={items} /> : <ResultTable items={items} />}
@@ -298,17 +301,17 @@ export default function Search() {
       ) : (
         <Card>
           <EmptyState
-            title={hasFilters ? "Nothing matches these filters" : "The gallery is empty"}
+            title={hasFilters ? t("search.nothingMatchesTheseFilters") : t("search.theGalleryIsEmpty")}
             description={
               hasFilters
-                ? "Widen the time range, or pick another camera, type or colour."
-                : "Items land here automatically whenever a camera raises an abandoned-object alert."
+                ? t("search.widenTheTimeRangeOr")
+                : t("search.itemsLandHereAutomaticallyWhenever")
             }
             icon={<ImageSearchIcon fontSize="inherit" />}
             action={
               hasFilters ? (
                 <Button variant="outlined" onClick={clearFilters}>
-                  Clear filters
+                  {t("search.clearFilters")}
                 </Button>
               ) : null
             }
@@ -320,15 +323,17 @@ export default function Search() {
 }
 
 function CameraLabel({ item }) {
-  if (!item.camera_id) return "Camera deleted";
+  const { t } = useTranslation();
+  if (!item.camera_id) return t("search.cameraDeleted");
   return (
     <Link component={RouterLink} to={`/cameras/${item.camera_id}`} underline="hover" color="inherit">
-      {item.camera_name || "Unnamed camera"}
+      {item.camera_name || t("search.unnamedCamera")}
     </Link>
   );
 }
 
 function ResultCards({ items }) {
+  const { t } = useTranslation();
   return (
     <Grid container spacing={2}>
       {items.map((item) => (
@@ -336,9 +341,9 @@ function ResultCards({ items }) {
           <Card sx={{ height: "100%" }} data-testid="search-result">
             <ItemImage
               src={foundApi.cropUrl(item.found_id)}
-              alt={`Found ${item.class_name}`}
+              alt={t("search.foundClassName", { class_name: item.class_name })}
               height={180}
-              fallbackLabel="No crop stored"
+              fallbackLabel={t("search.noCrop")}
             />
             <CardContent>
               <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
@@ -376,7 +381,7 @@ function ResultCards({ items }) {
                     clickable
                     component={RouterLink}
                     to={`/events/${item.event_id}`}
-                    label="View alert"
+                    label={t("search.viewAlert")}
                   />
                 ) : null}
               </Stack>
@@ -389,19 +394,20 @@ function ResultCards({ items }) {
 }
 
 function ResultTable({ items }) {
+  const { t } = useTranslation();
   return (
     <Card>
       <TableContainer>
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell sx={{ width: 88 }}>Crop</TableCell>
-              <TableCell>Object</TableCell>
-              <TableCell>Colour</TableCell>
-              <TableCell>Camera</TableCell>
-              <TableCell>Date</TableCell>
-              <TableCell>Time</TableCell>
-              <TableCell>Status</TableCell>
+              <TableCell sx={{ width: 88 }}>{t("search.crop")}</TableCell>
+              <TableCell>{t("search.object")}</TableCell>
+              <TableCell>{t("search.colour")}</TableCell>
+              <TableCell>{t("search.camera")}</TableCell>
+              <TableCell>{t("search.date")}</TableCell>
+              <TableCell>{t("search.time")}</TableCell>
+              <TableCell>{t("search.status")}</TableCell>
               <TableCell align="right" />
             </TableRow>
           </TableHead>
@@ -411,7 +417,7 @@ function ResultTable({ items }) {
                 <TableCell>
                   <ItemImage
                     src={foundApi.cropUrl(item.found_id)}
-                    alt={`Found ${item.class_name}`}
+                    alt={t("search.foundClassName", { class_name: item.class_name })}
                     height={48}
                     fallbackLabel="—"
                     sx={{ width: 64, borderRadius: 0.5 }}
@@ -430,7 +436,7 @@ function ResultTable({ items }) {
                 <TableCell align="right">
                   {item.event_id ? (
                     <Link component={RouterLink} to={`/events/${item.event_id}`} underline="hover">
-                      View alert
+                      {t("search.viewAlert")}
                     </Link>
                   ) : null}
                 </TableCell>

@@ -22,6 +22,8 @@ import { useToast } from "../../components/Toast";
 import { ErrorState, Loading } from "../../components/DataStates";
 import PageHeader from "../../components/PageHeader";
 import { parseJsonField } from "../../utils/format";
+import { useTranslation } from "react-i18next";
+import i18n from "i18next";
 
 const EMPTY = {
   name: "",
@@ -43,33 +45,33 @@ const EMPTY = {
 const OVERRIDE_FIELDS = [
   {
     key: "abandon_seconds",
-    label: "Abandon after",
+    get label() { return i18n.t("cameraForm.abandonAfter"); },
     unit: "s",
-    help: "Unattended time before an alert is raised. PETS2006 convention is 30s.",
+    get help() { return i18n.t("cameraForm.unattendedTimeBeforeAnAlert"); },
     min: 1,
     max: 3600,
   },
   {
     key: "owner_distance_px",
-    label: "Owner radius",
+    get label() { return i18n.t("cameraForm.ownerRadius"); },
     unit: "px",
-    help: "The nearest person within this distance when the object goes static becomes its owner.",
+    get help() { return i18n.t("cameraForm.theNearestPersonWithinThis"); },
     min: 1,
     max: 4000,
   },
   {
     key: "abandon_distance_px",
-    label: "Abandon radius",
+    get label() { return i18n.t("cameraForm.abandonRadius"); },
     unit: "px",
-    help: "Once the owner is further away than this, the unattended timer starts.",
+    get help() { return i18n.t("cameraForm.onceTheOwnerIsFurther"); },
     min: 1,
     max: 4000,
   },
   {
     key: "static_tolerance_px",
-    label: "Static tolerance",
+    get label() { return i18n.t("cameraForm.staticTolerance"); },
     unit: "px",
-    help: "How far a centroid may drift and still count as stationary.",
+    get help() { return i18n.t("cameraForm.howFarACentroidMay"); },
     min: 1,
     max: 1000,
   },
@@ -77,18 +79,18 @@ const OVERRIDE_FIELDS = [
 
 function validate(values) {
   const errors = {};
-  if (!values.name.trim()) errors.name = "Required";
-  else if (values.name.length > 120) errors.name = "At most 120 characters";
+  if (!values.name.trim()) errors.name = i18n.t("cameraForm.required");
+  else if (values.name.length > 120) errors.name = i18n.t("cameraForm.atMost120Characters");
 
-  if (!values.rtsp_url.trim()) errors.rtsp_url = "Required";
-  if (values.location.length > 200) errors.location = "At most 200 characters";
+  if (!values.rtsp_url.trim()) errors.rtsp_url = i18n.t("cameraForm.required");
+  if (values.location.length > 200) errors.location = i18n.t("cameraForm.atMost200Characters");
 
-  OVERRIDE_FIELDS.forEach(({ key, label, min, max }) => {
+  OVERRIDE_FIELDS.forEach(({ key, min, max }) => {
     const raw = values[key];
     if (raw === "" || raw === null || raw === undefined) return;
     const value = Number(raw);
-    if (Number.isNaN(value)) errors[key] = "Must be a number";
-    else if (value < min || value > max) errors[key] = `Between ${min} and ${max}`;
+    if (Number.isNaN(value)) errors[key] = i18n.t("cameraForm.mustBeANumber");
+    else if (value < min || value > max) errors[key] = i18n.t("cameraForm.betweenMinAndMax", { min, max });
   });
 
   // The backend validates neither of these against the other, but an abandon
@@ -97,13 +99,14 @@ function validate(values) {
   const owner = values.owner_distance_px === "" ? null : Number(values.owner_distance_px);
   const abandon = values.abandon_distance_px === "" ? null : Number(values.abandon_distance_px);
   if (owner !== null && abandon !== null && abandon <= owner) {
-    errors.abandon_distance_px = "Must be greater than the owner radius";
+    errors.abandon_distance_px = i18n.t("cameraForm.mustBeGreaterThanThe");
   }
 
   return errors;
 }
 
 export default function CameraForm() {
+  const { t } = useTranslation();
   const { cameraId } = useParams();
   const isEdit = Boolean(cameraId);
   const navigate = useNavigate();
@@ -172,11 +175,11 @@ export default function CameraForm() {
     try {
       if (isEdit) {
         await camerasApi.update(cameraId, payload);
-        toast.success(`Camera "${payload.name}" updated.`);
+        toast.success(t("cameraForm.cameraNameUpdated", { name: payload.name }));
         navigate(`/cameras/${cameraId}`);
       } else {
         const created = await camerasApi.create(payload);
-        toast.success(`Camera "${created.name}" registered.`);
+        toast.success(t("cameraForm.cameraNameRegistered", { name: created.name }));
         navigate(`/cameras/${created.camera_id}`);
       }
     } catch (err) {
@@ -186,7 +189,7 @@ export default function CameraForm() {
     }
   };
 
-  if (isEdit && loading && !camera) return <Loading label="Loading camera…" />;
+  if (isEdit && loading && !camera) return <Loading label={t("cameraForm.loadingCamera")} />;
   if (isEdit && loadError) return <ErrorState error={loadError} onRetry={refresh} />;
 
   return (
@@ -196,15 +199,15 @@ export default function CameraForm() {
         onClick={() => navigate(isEdit ? `/cameras/${cameraId}` : "/cameras")}
         sx={{ mb: 2 }}
       >
-        Back
+        {t("cameraForm.back")}
       </Button>
 
       <PageHeader
-        title={isEdit ? `Edit ${camera?.name || "camera"}` : "Register a camera"}
+        title={isEdit ? t("cameraForm.editV0", { v0: camera?.name || "camera" }) : t("cameraForm.registerACamera")}
         subtitle={
           isEdit
-            ? "A running worker is restarted when you save, so changes take effect at once."
-            : "An enabled camera starts its detection worker as soon as it is saved."
+            ? t("cameraForm.aRunningWorkerIsRestarted")
+            : t("cameraForm.anEnabledCameraStartsIts")
         }
       />
 
@@ -214,44 +217,44 @@ export default function CameraForm() {
             <Card>
               <CardContent>
                 <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 2 }}>
-                  Source
+                  {t("cameraForm.source")}
                 </Typography>
                 <Stack spacing={2.5}>
                   <TextField
-                    label="Name"
+                    label={t("cameraForm.name")}
                     value={values.name}
                     onChange={setField("name")}
                     error={Boolean(errors.name)}
-                    helperText={errors.name || "Must be unique within this workspace."}
+                    helperText={errors.name || t("cameraForm.mustBeUniqueWithinThis")}
                     required
                     fullWidth
                     autoFocus
                   />
                   <TextField
-                    label="RTSP URL"
+                    label={t("cameraForm.rtspUrl")}
                     value={values.rtsp_url}
                     onChange={setField("rtsp_url")}
                     error={Boolean(errors.rtsp_url)}
                     helperText={
                       errors.rtsp_url ||
-                      "rtsp://user:pass@host:554/stream, or a file path inside the API container for testing."
+                      t("cameraForm.rtspUserPassHost554")
                     }
                     required
                     fullWidth
-                    placeholder="rtsp://mediamtx:8554/lostfound"
+                    placeholder={t("cameraForm.rtspMediamtx8554Lostfound")}
                   />
                   <TextField
-                    label="Location"
+                    label={t("cameraForm.location")}
                     value={values.location}
                     onChange={setField("location")}
                     error={Boolean(errors.location)}
-                    helperText={errors.location || "Where an operator would physically go."}
+                    helperText={errors.location || t("cameraForm.whereAnOperatorWouldPhysically")}
                     fullWidth
-                    placeholder="Terminal 1, Ground Floor"
+                    placeholder={t("cameraForm.terminal1GroundFloor")}
                   />
                   <FormControlLabel
                     control={<Switch checked={values.enabled} onChange={setField("enabled")} />}
-                    label="Enabled"
+                    label={t("cameraForm.enabled")}
                   />
                 </Stack>
               </CardContent>
@@ -262,11 +265,10 @@ export default function CameraForm() {
             <Card>
               <CardContent>
                 <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                  Thresholds
+                  {t("cameraForm.thresholds")}
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 2 }}>
-                  Leave a field blank to inherit the global value from the API's environment. A
-                  blank is not zero.
+                  {t("cameraForm.leaveAFieldBlankTo")}
                 </Typography>
                 <Divider sx={{ mb: 2.5 }} />
                 <Stack spacing={2.5}>
@@ -300,14 +302,14 @@ export default function CameraForm() {
             ) : null}
             <Stack direction="row" spacing={1}>
               <Button type="submit" variant="contained" disabled={saving}>
-                {saving ? "Saving…" : isEdit ? "Save changes" : "Register camera"}
+                {saving ? t("cameraForm.saving") : isEdit ? t("cameraForm.saveChanges") : t("cameraForm.registerCamera")}
               </Button>
               <Button
                 color="inherit"
                 disabled={saving}
                 onClick={() => navigate(isEdit ? `/cameras/${cameraId}` : "/cameras")}
               >
-                Cancel
+                {t("cameraForm.cancel")}
               </Button>
             </Stack>
           </Grid>

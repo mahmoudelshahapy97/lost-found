@@ -32,6 +32,8 @@ import { useAuth } from "../auth/AuthContext";
 import { useAsync } from "../hooks/useAsync";
 import { EVENT_STATUS } from "../utils/constants";
 import { describeBox, formatDateTime, formatScore, fromNow, shortId, titleCase } from "../utils/format";
+import { useTranslation } from "react-i18next";
+import i18n from "i18next";
 
 function DetailRow({ label, children }) {
   return (
@@ -48,28 +50,28 @@ function DetailRow({ label, children }) {
 const TRIAGE = [
   {
     status: EVENT_STATUS.ACKNOWLEDGED,
-    label: "Acknowledge",
+    get label() { return i18n.t("eventDetail.acknowledge"); },
     icon: <CheckCircleOutlineIcon />,
     color: "warning",
   },
-  { status: EVENT_STATUS.RESOLVED, label: "Resolve", icon: <DoneAllIcon />, color: "success" },
+  { status: EVENT_STATUS.RESOLVED, get label() { return i18n.t("eventDetail.resolve"); }, icon: <DoneAllIcon />, color: "success" },
   {
     status: EVENT_STATUS.FALSE_POSITIVE,
-    label: "False positive",
+    get label() { return i18n.t("eventDetail.falsePositive"); },
     icon: <ThumbDownOffAltIcon />,
     color: "inherit",
   },
 ];
 
 const TRIAGE_HINT = {
-  [EVENT_STATUS.ACKNOWLEDGED]: "Someone is on it. The alert stays in the open work.",
-  [EVENT_STATUS.RESOLVED]: "The item was dealt with: collected, returned or handed in.",
-  [EVENT_STATUS.FALSE_POSITIVE]:
-    "Nothing was left behind. Its unclaimed item is also discarded from the found gallery.",
+  get [EVENT_STATUS.ACKNOWLEDGED]() { return i18n.t("eventDetail.someoneIsOnItThe"); },
+  get [EVENT_STATUS.RESOLVED]() { return i18n.t("eventDetail.theItemWasDealtWith"); },
+  get [EVENT_STATUS.FALSE_POSITIVE]() { return i18n.t("eventDetail.nothingWasLeftBehindIts"); },
 };
 
 /** Confirms a triage step and records how the alert was handled. */
 function TriageDialog({ open, status, label, initial, busy, onConfirm, onClose }) {
+  const { t } = useTranslation();
   const [actionTaken, setActionTaken] = useState("");
   const [description, setDescription] = useState("");
 
@@ -91,8 +93,8 @@ function TriageDialog({ open, status, label, initial, busy, onConfirm, onClose }
         <DialogContentText sx={{ mb: 2 }}>{TRIAGE_HINT[status]}</DialogContentText>
         <Stack spacing={2}>
           <TextField
-            label="Action taken"
-            placeholder="e.g. Bag collected by security, logged as LF-1042"
+            label={t("eventDetail.actionTaken")}
+            placeholder={t("eventDetail.eGBagCollectedBy")}
             value={actionTaken}
             onChange={(event) => setActionTaken(event.target.value)}
             inputProps={{ maxLength: 200 }}
@@ -100,7 +102,7 @@ function TriageDialog({ open, status, label, initial, busy, onConfirm, onClose }
             autoFocus
           />
           <TextField
-            label="Notes"
+            label={t("eventDetail.notes")}
             value={description}
             onChange={(event) => setDescription(event.target.value)}
             inputProps={{ maxLength: 2000 }}
@@ -112,14 +114,14 @@ function TriageDialog({ open, status, label, initial, busy, onConfirm, onClose }
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
         <Button onClick={onClose} disabled={busy} color="inherit">
-          Cancel
+          {t("eventDetail.cancel")}
         </Button>
         <Button
           variant="contained"
           disabled={busy}
           onClick={() => onConfirm({ action_taken: actionTaken.trim(), description: description.trim() })}
         >
-          {busy ? "Working…" : label}
+          {busy ? t("eventDetail.working") : label}
         </Button>
       </DialogActions>
     </Dialog>
@@ -127,6 +129,7 @@ function TriageDialog({ open, status, label, initial, busy, onConfirm, onClose }
 }
 
 export default function EventDetail() {
+  const { t } = useTranslation();
   const { eventId } = useParams();
   const toast = useToast();
   const { hasRole } = useAuth();
@@ -147,7 +150,7 @@ export default function EventDetail() {
       // Empty fields are left out so the notes already stored are kept.
       const filled = Object.fromEntries(Object.entries(notes || {}).filter(([, v]) => v));
       await eventApi.setStatus(eventId, status, filled);
-      toast.success(`Alert marked ${titleCase(status).toLowerCase()}.`);
+      toast.success(t("eventDetail.alertMarkedV0", { v0: titleCase(status).toLowerCase() }));
       setPending(null);
       refresh();
     } catch (err) {
@@ -157,19 +160,19 @@ export default function EventDetail() {
     }
   };
 
-  if (loading && !data) return <Loading label="Loading alert…" />;
+  if (loading && !data) return <Loading label={t("eventDetail.loadingAlert")} />;
   if (error) return <ErrorState error={error} onRetry={refresh} />;
   if (!data) return null;
 
   return (
     <Box>
       <Button component={RouterLink} to="/events" startIcon={<ArrowBackIcon />} sx={{ mb: 2 }}>
-        All alerts
+        {t("eventDetail.allAlerts")}
       </Button>
 
       <PageHeader
-        title={`Abandoned ${data.class_name}`}
-        subtitle={`${data.camera_name || "Unknown camera"} · ${fromNow(data.abandoned_at)}`}
+        title={t("eventDetail.abandonedClassName", { class_name: data.class_name })}
+        subtitle={`${data.camera_name || t("eventDetail.unknownCamera")} · ${fromNow(data.abandoned_at)}`}
         actions={
           canTriage &&
           TRIAGE.map(({ status, label, icon, color }) => (
@@ -202,10 +205,10 @@ export default function EventDetail() {
           <Card sx={{ mb: 2 }}>
             <Box sx={{ px: 2.5, py: 1.5 }}>
               <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                Video
+                {t("eventDetail.video")}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                Annotated footage from before the item was left until after the alert.
+                {t("eventDetail.annotatedFootageFromBeforeThe")}
               </Typography>
             </Box>
             <Divider />
@@ -219,8 +222,7 @@ export default function EventDetail() {
               />
             ) : (
               <Typography variant="body2" color="text.secondary" sx={{ px: 2.5, py: 3 }}>
-                No clip recorded for this alert. A clip is saved a few seconds after the alert
-                fires; older ones are removed by retention.
+                {t("eventDetail.noClipRecordedForThis")}
               </Typography>
             )}
           </Card>
@@ -228,19 +230,19 @@ export default function EventDetail() {
           <Card>
             <Box sx={{ px: 2.5, py: 1.5 }}>
               <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                Alert frame
+                {t("eventDetail.alertFrame")}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                The annotated frame captured the moment the object was declared abandoned.
+                {t("eventDetail.theAnnotatedFrameCapturedThe")}
               </Typography>
             </Box>
             <Divider />
             <ItemImage
               src={eventApi.frameUrl(eventId)}
-              alt={`Annotated frame for the abandoned ${data.class_name}`}
+              alt={t("eventDetail.annotatedFrameForTheAbandoned", { class_name: data.class_name })}
               height={420}
               fit="contain"
-              fallbackLabel="No frame stored for this alert"
+              fallbackLabel={t("eventDetail.noFrame")}
             />
           </Card>
         </Grid>
@@ -249,33 +251,33 @@ export default function EventDetail() {
           <Card>
             <CardContent>
               <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1 }}>
-                Detection
+                {t("eventDetail.detection")}
               </Typography>
               <Divider />
-              <DetailRow label="Status">
+              <DetailRow label={t("eventDetail.status")}>
                 <EventStatusChip status={data.status} />
               </DetailRow>
-              <DetailRow label="Object">
+              <DetailRow label={t("eventDetail.object")}>
                 <Typography variant="body2">{titleCase(data.class_name)}</Typography>
               </DetailRow>
-              <DetailRow label="Confidence">
+              <DetailRow label={t("eventDetail.confidence")}>
                 <Typography variant="body2">{formatScore(data.confidence)}</Typography>
               </DetailRow>
-              <DetailRow label="Dominant colour">
+              <DetailRow label={t("eventDetail.dominantColour")}>
                 <Typography variant="body2">
-                  {data.dominant_color ? titleCase(data.dominant_color) : "Not extracted"}
+                  {data.dominant_color ? titleCase(data.dominant_color) : t("eventDetail.notExtracted")}
                 </Typography>
               </DetailRow>
-              <DetailRow label="Bounding box">
+              <DetailRow label={t("eventDetail.boundingBox")}>
                 <Typography variant="body2" color="text.secondary">
                   {describeBox(data.bbox)}
                 </Typography>
               </DetailRow>
-              <DetailRow label="Owner track">
+              <DetailRow label={t("eventDetail.ownerTrack")}>
                 <Typography variant="body2" color="text.secondary">
                   {data.owner_track_id !== null && data.owner_track_id !== undefined
-                    ? `#${data.owner_track_id} walked away`
-                    : "No owner was ever associated"}
+                    ? t("eventDetail.ownerTrackIdWalkedAway", { owner_track_id: data.owner_track_id })
+                    : t("eventDetail.noOwnerWasEverAssociated")}
                 </Typography>
               </DetailRow>
             </CardContent>
@@ -284,26 +286,25 @@ export default function EventDetail() {
           <Card sx={{ mt: 2 }}>
             <CardContent>
               <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1 }}>
-                Timeline
+                {t("eventDetail.timeline")}
               </Typography>
               <Divider />
-              <DetailRow label="First seen">
+              <DetailRow label={t("eventDetail.firstSeen")}>
                 <Typography variant="body2" color="text.secondary">
                   {formatDateTime(data.first_seen_at)}
                 </Typography>
               </DetailRow>
-              <DetailRow label="Went static">
+              <DetailRow label={t("eventDetail.wentStatic")}>
                 <Typography variant="body2" color="text.secondary">
                   {formatDateTime(data.static_since)}
                 </Typography>
               </DetailRow>
-              <DetailRow label="Declared abandoned">
+              <DetailRow label={t("eventDetail.declaredAbandoned")}>
                 <Typography variant="body2">{formatDateTime(data.abandoned_at)}</Typography>
               </DetailRow>
-              <DetailRow label="Identity">
+              <DetailRow label={t("eventDetail.identity")}>
                 <Typography variant="caption" color="text.disabled">
-                  {data.track_key ? `track #${data.track_key}` : "no track"} · event{" "}
-                  {shortId(data.event_id)}
+                  {t("eventDetail.v0EventV1", { v0: data.track_key ? `track #${data.track_key}` : "no track", v1: shortId(data.event_id) })}
                 </Typography>
               </DetailRow>
             </CardContent>
@@ -313,27 +314,27 @@ export default function EventDetail() {
             <Card sx={{ mt: 2 }}>
               <CardContent>
                 <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1 }}>
-                  Handling
+                  {t("eventDetail.handling")}
                 </Typography>
                 <Divider />
-                <DetailRow label="Acknowledged">
+                <DetailRow label={t("eventDetail.acknowledged")}>
                   <Typography variant="body2" color="text.secondary">
                     {formatDateTime(data.acknowledged_at)}
                   </Typography>
                 </DetailRow>
-                <DetailRow label="Closed">
+                <DetailRow label={t("eventDetail.closed")}>
                   <Typography variant="body2" color="text.secondary">
                     {data.resolved_at
                       ? `${formatDateTime(data.resolved_at)}${
                           data.resolved_by_username ? ` by ${data.resolved_by_username}` : ""
                         }`
-                      : "Still open"}
+                      : t("eventDetail.stillOpen")}
                   </Typography>
                 </DetailRow>
-                <DetailRow label="Action taken">
+                <DetailRow label={t("eventDetail.actionTaken")}>
                   <Typography variant="body2">{data.action_taken || "—"}</Typography>
                 </DetailRow>
-                <DetailRow label="Notes">
+                <DetailRow label={t("eventDetail.notes")}>
                   <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
                     {data.description || "—"}
                   </Typography>
@@ -346,15 +347,14 @@ export default function EventDetail() {
             <Card sx={{ mt: 2 }}>
               <CardContent>
                 <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1 }}>
-                  Found gallery
+                  {t("eventDetail.foundGallery")}
                 </Typography>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  This object was cropped into the searchable gallery, so a lost report can be
-                  matched against it.
+                  {t("eventDetail.thisObjectWasCroppedInto")}
                 </Typography>
                 <Link component={RouterLink} to="/found-items" variant="body2">
-                  Open the found gallery
+                  {t("eventDetail.openTheFoundGallery")}
                 </Link>
               </CardContent>
             </Card>

@@ -22,6 +22,7 @@ import { errorMessage } from "../api/client";
 import { lostItems as lostApi } from "../api/endpoints";
 import { OBJECT_CLASSES } from "../utils/constants";
 import { titleCase } from "../utils/format";
+import { useTranslation } from "react-i18next";
 
 /** MAX_UPLOAD_BYTES in backend/.env. Checked here so a 20 MB photo fails at the
  *  file picker rather than after the whole body has been uploaded. */
@@ -38,6 +39,7 @@ const EMPTY = {
 };
 
 export default function ReportLostItem() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const toast = useToast();
 
@@ -69,16 +71,16 @@ export default function ReportLostItem() {
     const file = event.target.files?.[0];
     if (!file) return;
     if (!ACCEPTED.includes(file.type)) {
-      setErrors((current) => ({ ...current, photo: "Must be a JPEG, PNG, WebP or BMP image." }));
+      setErrors((current) => ({ ...current, photo: t("reportLostItem.badType") }));
       return;
     }
     if (file.size > MAX_UPLOAD_BYTES) {
       setErrors((current) => ({
         ...current,
-        photo: `At most ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB — this one is ${(
-          file.size /
-          (1024 * 1024)
-        ).toFixed(1)} MB.`,
+        photo: t("reportLostItem.tooLarge", {
+          max: MAX_UPLOAD_BYTES / (1024 * 1024),
+          size: (file.size / (1024 * 1024)).toFixed(1),
+        }),
       }));
       return;
     }
@@ -97,8 +99,8 @@ export default function ReportLostItem() {
   const submit = async (event) => {
     event.preventDefault();
     const found = {};
-    if (!hasEnough) found.form = "Provide a photo, a description, or both.";
-    if (!emailValid) found.reporter_email = "Not a valid email address";
+    if (!hasEnough) found.form = t("reportLostItem.needPhotoOrText");
+    if (!emailValid) found.reporter_email = t("reportLostItem.badEmail");
     setErrors(found);
     if (Object.keys(found).length) return;
 
@@ -116,7 +118,7 @@ export default function ReportLostItem() {
         lostAfter: values.lost_after,
       });
       const lostId = response?.data?.lost_id;
-      toast.success("Report filed. Ranking the found gallery against it now.");
+      toast.success(t("reportLostItem.reportFiledRankingTheFound"));
       navigate(lostId ? `/lost-items/${lostId}` : "/lost-items");
     } catch (err) {
       setSubmitError(errorMessage(err));
@@ -128,12 +130,12 @@ export default function ReportLostItem() {
   return (
     <Box>
       <Button startIcon={<ArrowBackIcon />} onClick={() => navigate("/lost-items")} sx={{ mb: 2 }}>
-        All reports
+        {t("reportLostItem.allReports")}
       </Button>
 
       <PageHeader
-        title="Report a lost item"
-        subtitle="Candidates are matched on object type, colour and when the item was lost. The photo gives the colour and lets staff compare by eye; a colour word in the description works too."
+        title={t("reportLostItem.reportALostItem")}
+        subtitle={t("reportLostItem.candidatesAreMatchedOnObject")}
       />
 
       <Box component="form" onSubmit={submit} noValidate>
@@ -142,14 +144,14 @@ export default function ReportLostItem() {
             <Card>
               <CardContent>
                 <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 2 }}>
-                  Photo
+                  {t("reportLostItem.photo")}
                 </Typography>
                 <ItemImage
                   src={preview}
-                  alt={photo ? `Preview of ${photo.name}` : "No photo selected"}
+                  alt={photo ? t("reportLostItem.previewOfName", { name: photo.name }) : t("reportLostItem.noPhotoSelected")}
                   height={260}
                   fit="contain"
-                  fallbackLabel="No photo selected"
+                  fallbackLabel={t("reportLostItem.noPhotoSelected")}
                   sx={{ borderRadius: 1, mb: 2 }}
                 />
                 <Button
@@ -158,13 +160,13 @@ export default function ReportLostItem() {
                   fullWidth
                   startIcon={<PhotoCameraIcon />}
                 >
-                  {photo ? "Choose a different photo" : "Choose a photo"}
+                  {photo ? t("reportLostItem.chooseADifferentPhoto") : t("reportLostItem.chooseAPhoto")}
                   <input
                     type="file"
                     hidden
                     accept={ACCEPTED.join(",")}
                     onChange={pickPhoto}
-                    aria-label="Photo of the lost item"
+                    aria-label={t("reportLostItem.photoOfTheLostItem")}
                   />
                 </Button>
                 {photo ? (
@@ -178,7 +180,7 @@ export default function ReportLostItem() {
                       {photo.name}
                     </Typography>
                     <Button size="small" color="inherit" onClick={() => setPhoto(null)}>
-                      Remove
+                      {t("reportLostItem.remove")}
                     </Button>
                   </Stack>
                 ) : null}
@@ -195,28 +197,28 @@ export default function ReportLostItem() {
             <Card>
               <CardContent>
                 <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 2 }}>
-                  Details
+                  {t("reportLostItem.details")}
                 </Typography>
                 <Stack spacing={2.5}>
                   <TextField
-                    label="Description"
+                    label={t("reportLostItem.description")}
                     value={values.description}
                     onChange={setField("description")}
                     fullWidth
                     multiline
                     minRows={2}
-                    placeholder="Black leather bag with a front zip pocket and a red keyring"
-                    helperText="Colour, material and distinguishing marks. Searched as text against the gallery even with no photo."
+                    placeholder={t("reportLostItem.blackLeatherBagWithA")}
+                    helperText={t("reportLostItem.colourMaterialAndDistinguishingMarks")}
                   />
                   <TextField
                     select
-                    label="Object type"
+                    label={t("reportLostItem.objectType")}
                     value={values.class_name}
                     onChange={setField("class_name")}
                     fullWidth
-                    helperText="Narrows the search, and adds a small bonus to same-class candidates."
+                    helperText={t("reportLostItem.narrowsTheSearchAndAdds")}
                   >
-                    <MenuItem value="">Not sure</MenuItem>
+                    <MenuItem value="">{t("reportLostItem.notSure")}</MenuItem>
                     {OBJECT_CLASSES.map((value) => (
                       <MenuItem key={value} value={value}>
                         {titleCase(value)}
@@ -228,30 +230,30 @@ export default function ReportLostItem() {
 
                   <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
                     <TextField
-                      label="Your name"
+                      label={t("reportLostItem.yourName")}
                       value={values.reporter_name}
                       onChange={setField("reporter_name")}
                       fullWidth
                     />
                     <TextField
-                      label="Email"
+                      label={t("reportLostItem.email")}
                       type="email"
                       value={values.reporter_email}
                       onChange={setField("reporter_email")}
                       error={Boolean(errors.reporter_email)}
-                      helperText={errors.reporter_email || "So we can tell you when it turns up."}
+                      helperText={errors.reporter_email || t("reportLostItem.soWeCanTellYou")}
                       fullWidth
                     />
                   </Stack>
 
                   <TextField
-                    label="Lost after"
+                    label={t("reportLostItem.lostAfter")}
                     type="datetime-local"
                     value={values.lost_after}
                     onChange={setField("lost_after")}
                     fullWidth
                     slotProps={{ inputLabel: { shrink: true } }}
-                    helperText="Optional. Items found before this time are excluded from the search."
+                    helperText={t("reportLostItem.optionalItemsFoundBeforeThis")}
                   />
                 </Stack>
               </CardContent>
@@ -271,10 +273,10 @@ export default function ReportLostItem() {
             ) : null}
             <Stack direction="row" spacing={1}>
               <Button type="submit" variant="contained" disabled={saving || !hasEnough}>
-                {saving ? "Filing…" : "File report"}
+                {saving ? t("reportLostItem.filing") : t("reportLostItem.fileReport")}
               </Button>
               <Button color="inherit" disabled={saving} onClick={() => navigate("/lost-items")}>
-                Cancel
+                {t("reportLostItem.cancel")}
               </Button>
             </Stack>
           </Grid>

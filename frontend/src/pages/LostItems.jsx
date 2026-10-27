@@ -28,8 +28,10 @@ import { useAuth } from "../auth/AuthContext";
 import { useAsync } from "../hooks/useAsync";
 import { LOST_STATUSES, PAGE_SIZE, PAGE_SIZE_OPTIONS } from "../utils/constants";
 import { formatDateTime, fromNow, titleCase } from "../utils/format";
+import { useTranslation } from "react-i18next";
 
 export default function LostItems() {
+  const { t } = useTranslation();
   const [params, setParams] = useSearchParams();
   const { hasRole } = useAuth();
   const canReport = hasRole("operator");
@@ -57,8 +59,8 @@ export default function LostItems() {
   return (
     <Box>
       <PageHeader
-        title="Lost reports"
-        subtitle="What people have told us they are missing."
+        title={t("lostItems.lostReports")}
+        subtitle={t("lostItems.whatPeopleHaveToldUs")}
         actions={[
           canReport && (
             <Button
@@ -68,11 +70,11 @@ export default function LostItems() {
               variant="contained"
               startIcon={<AddAPhotoIcon />}
             >
-              Report lost item
+              {t("lostItems.reportLostItem")}
             </Button>
           ),
           <Button key="refresh" onClick={refresh} startIcon={<RefreshIcon />}>
-            Refresh
+            {t("lostItems.refresh")}
           </Button>,
         ]}
       />
@@ -81,13 +83,13 @@ export default function LostItems() {
         <Stack direction="row" spacing={2} alignItems="center">
           <TextField
             select
-            label="Status"
+            label={t("lostItems.status")}
             size="small"
             value={status}
             onChange={(event) => setParam("status", event.target.value)}
             sx={{ minWidth: 200 }}
           >
-            <MenuItem value="">All statuses</MenuItem>
+            <MenuItem value="">{t("lostItems.allStatuses")}</MenuItem>
             {LOST_STATUSES.map((value) => (
               <MenuItem key={value} value={value}>
                 {titleCase(value)}
@@ -95,26 +97,26 @@ export default function LostItems() {
             ))}
           </TextField>
           <Box sx={{ flex: 1 }} />
-          {status ? <Button onClick={() => setParam("status", "")}>Clear</Button> : null}
+          {status ? <Button onClick={() => setParam("status", "")}>{t("lostItems.clear")}</Button> : null}
         </Stack>
       </Card>
 
       <ErrorState error={error} onRetry={refresh} />
 
       {loading && !data ? (
-        <Loading label="Loading reports…" />
+        <Loading label={t("lostItems.loadingReports")} />
       ) : rows.length ? (
         <Card>
           <TableContainer>
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell>Description</TableCell>
-                  <TableCell>Reporter</TableCell>
-                  <TableCell>Object</TableCell>
-                  <TableCell>Colour</TableCell>
-                  <TableCell>Reported</TableCell>
-                  <TableCell>Status</TableCell>
+                  <TableCell>{t("lostItems.description")}</TableCell>
+                  <TableCell>{t("lostItems.reporter")}</TableCell>
+                  <TableCell>{t("lostItems.object")}</TableCell>
+                  <TableCell>{t("lostItems.colour")}</TableCell>
+                  <TableCell>{t("lostItems.reported")}</TableCell>
+                  <TableCell>{t("lostItems.status")}</TableCell>
                   <TableCell align="right" />
                 </TableRow>
               </TableHead>
@@ -128,7 +130,7 @@ export default function LostItems() {
                         underline="hover"
                         sx={{ fontWeight: 600 }}
                       >
-                        {item.description || "Photo-only report"}
+                        {item.description || t("lostItems.photoOnlyReport")}
                       </Link>
                     </TableCell>
                     <TableCell>
@@ -143,7 +145,7 @@ export default function LostItems() {
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" color="text.secondary">
-                        {item.class_name ? titleCase(item.class_name) : "Unspecified"}
+                        {item.class_name ? titleCase(item.class_name) : t("lostItems.unspecified")}
                       </Typography>
                     </TableCell>
                     <TableCell>
@@ -167,7 +169,7 @@ export default function LostItems() {
                         component={RouterLink}
                         to={`/lost-items/${item.lost_id}`}
                       >
-                        Find matches
+                        {t("lostItems.findMatches")}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -189,8 +191,8 @@ export default function LostItems() {
       ) : (
         <Card>
           <EmptyState
-            title={status ? "No reports with this status" : "No lost items reported"}
-            description="A report is matched against the found gallery on object type, colour and the time it was lost."
+            title={status ? t("lostItems.noReportsWithThisStatus") : t("lostItems.noLostItemsReported")}
+            description={t("lostItems.aReportIsMatchedAgainst")}
             icon={<ReportProblemIcon fontSize="inherit" />}
             action={
               canReport && (
@@ -200,7 +202,7 @@ export default function LostItems() {
                   variant="contained"
                   startIcon={<AddAPhotoIcon />}
                 >
-                  Report lost item
+                  {t("lostItems.reportLostItem")}
                 </Button>
               )
             }

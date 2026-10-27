@@ -1,10 +1,9 @@
 import { Suspense, lazy } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import LuggageIcon from "@mui/icons-material/Luggage";
+import { AuthLayout, Loading, RequireAuth } from "@insighteye/ui";
 import AppLayout from "../layouts/AppLayout";
-import AuthLayout from "../layouts/AuthLayout";
-import { Loading } from "../components/DataStates";
-import { RequireAuth } from "./RequireAuth";
-import { WorkspaceProvider } from "../workspace/WorkspaceContext";
 
 // Code-split per route: the dashboard is the landing screen and has no business
 // downloading the report form and the search page before it can paint.
@@ -14,8 +13,10 @@ const Dashboard = lazy(() => import("../pages/Dashboard"));
 const CameraList = lazy(() => import("../pages/cameras/CameraList"));
 const CameraForm = lazy(() => import("../pages/cameras/CameraForm"));
 const CameraDetail = lazy(() => import("../pages/cameras/CameraDetail"));
+const LiveWall = lazy(() => import("../pages/LiveWall"));
 const Events = lazy(() => import("../pages/Events"));
 const EventDetail = lazy(() => import("../pages/EventDetail"));
+const Notifications = lazy(() => import("../pages/Notifications"));
 // Its own chunk, so chart.js is only downloaded by someone who opens it.
 const Analytics = lazy(() => import("../pages/Analytics"));
 const LostItems = lazy(() => import("../pages/LostItems"));
@@ -26,14 +27,17 @@ const Search = lazy(() => import("../pages/Search"));
 const SystemStatus = lazy(() => import("../pages/SystemStatus"));
 const Users = lazy(() => import("../pages/admin/Users"));
 const Workspaces = lazy(() => import("../pages/admin/Workspaces"));
+const AuditLog = lazy(() => import("../pages/admin/AuditLog"));
 const NotFound = lazy(() => import("../pages/NotFound"));
 
-export function AppRouter({ mode, onToggleMode }) {
+export function AppRouter() {
+  const { t } = useTranslation();
+  const product = { brand: "InsightEye", tagline: t("product.tagline"), icon: <LuggageIcon /> };
   return (
     <BrowserRouter>
-      <Suspense fallback={<Loading label="Loading…" height="60vh" />}>
+      <Suspense fallback={<Loading height="60vh" />}>
         <Routes>
-          <Route element={<AuthLayout />}>
+          <Route element={<AuthLayout product={product} />}>
             <Route path="/login" element={<Login />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
           </Route>
@@ -41,9 +45,7 @@ export function AppRouter({ mode, onToggleMode }) {
           <Route
             element={
               <RequireAuth>
-                <WorkspaceProvider>
-                  <AppLayout mode={mode} onToggleMode={onToggleMode} />
-                </WorkspaceProvider>
+                <AppLayout />
               </RequireAuth>
             }
           >
@@ -54,7 +56,7 @@ export function AppRouter({ mode, onToggleMode }) {
               <Route
                 path="new"
                 element={
-                  <RequireAuth minimum="admin">
+                  <RequireAuth perm="admin">
                     <CameraForm />
                   </RequireAuth>
                 }
@@ -63,17 +65,19 @@ export function AppRouter({ mode, onToggleMode }) {
               <Route
                 path=":cameraId/edit"
                 element={
-                  <RequireAuth minimum="admin">
+                  <RequireAuth perm="admin">
                     <CameraForm />
                   </RequireAuth>
                 }
               />
             </Route>
+            <Route path="/live" element={<LiveWall />} />
 
             <Route path="/events">
               <Route index element={<Events />} />
               <Route path=":eventId" element={<EventDetail />} />
             </Route>
+            <Route path="/notifications" element={<Notifications />} />
 
             <Route path="/analytics" element={<Analytics />} />
 
@@ -83,7 +87,7 @@ export function AppRouter({ mode, onToggleMode }) {
               <Route
                 path="new"
                 element={
-                  <RequireAuth minimum="operator">
+                  <RequireAuth perm="operator">
                     <ReportLostItem />
                   </RequireAuth>
                 }
@@ -98,17 +102,24 @@ export function AppRouter({ mode, onToggleMode }) {
             <Route
               path="/workspaces"
               element={
-                <RequireAuth minimum="admin">
+                <RequireAuth perm="admin">
                   <Workspaces />
                 </RequireAuth>
               }
             />
-
             <Route
               path="/users"
               element={
-                <RequireAuth minimum="admin">
+                <RequireAuth perm="admin">
                   <Users />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/audit"
+              element={
+                <RequireAuth perm="admin">
+                  <AuditLog />
                 </RequireAuth>
               }
             />

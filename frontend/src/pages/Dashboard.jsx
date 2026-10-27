@@ -28,8 +28,10 @@ import { useAsync } from "../hooks/useAsync";
 import { usePolling } from "../hooks/usePolling";
 import { POLL_INTERVAL_MS } from "../utils/constants";
 import { formatNumber, fromNow, titleCase } from "../utils/format";
+import { useTranslation } from "react-i18next";
 
 export default function Dashboard() {
+  const { t } = useTranslation();
   // The alert counters are the one thing worth polling: a new abandonment
   // should surface without anyone reaching for refresh.
   const stats = usePolling(({ signal }) => events.stats(undefined, { signal }), {
@@ -65,8 +67,8 @@ export default function Dashboard() {
   return (
     <Box>
       <PageHeader
-        title="Dashboard"
-        subtitle="What the cameras have flagged, and what is still waiting on someone."
+        title={t("dashboard.dashboard")}
+        subtitle={t("dashboard.whatTheCamerasHaveFlagged")}
         actions={[
           <Button
             key="report"
@@ -75,34 +77,34 @@ export default function Dashboard() {
             variant="contained"
             startIcon={<AddAPhotoIcon />}
           >
-            Report lost item
+            {t("dashboard.reportLostItem")}
           </Button>,
           <Button key="refresh" onClick={refreshAll} startIcon={<RefreshIcon />}>
-            Refresh
+            {t("dashboard.refresh")}
           </Button>,
         ]}
       />
 
-      <ErrorState error={stats.error} onRetry={stats.refresh} title="Could not load the counters" />
+      <ErrorState error={stats.error} onRetry={stats.refresh} title={t("dashboard.couldNotLoadTheCounters")} />
 
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
           <StatCard
-            label="Open alerts"
+            label={t("dashboard.openAlerts")}
             value={formatNumber(eventStats.open ?? 0)}
-            hint="Abandoned objects nobody has triaged"
+            hint={t("dashboard.abandonedObjectsNobodyHasTriaged")}
             icon={<NotificationsIcon />}
             color="error"
           />
         </Grid>
         <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
           <StatCard
-            label="Alerts, last 24h"
+            label={t("dashboard.alertsLast24h")}
             value={formatNumber(eventStats.last_24h ?? 0)}
             hint={
               eventStats.last_event_at
-                ? `Most recent ${fromNow(eventStats.last_event_at)}`
-                : "Nothing yet"
+                ? t("dashboard.mostRecentV0", { v0: fromNow(eventStats.last_event_at) })
+                : t("dashboard.nothingYet")
             }
             icon={<NotificationsIcon />}
             color="warning"
@@ -110,18 +112,18 @@ export default function Dashboard() {
         </Grid>
         <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
           <StatCard
-            label="Unclaimed items"
+            label={t("dashboard.unclaimedItems")}
             value={formatNumber(unclaimed.data?.total ?? 0)}
-            hint="Sitting in the found gallery"
+            hint={t("dashboard.sittingInTheFoundGallery")}
             icon={<Inventory2Icon />}
             color="info"
           />
         </Grid>
         <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
           <StatCard
-            label="Open reports"
+            label={t("dashboard.openReports")}
             value={formatNumber(openLost.data?.total ?? 0)}
-            hint="People still waiting on a match"
+            hint={t("dashboard.peopleStillWaitingOnA")}
             icon={<ReportProblemIcon />}
             color="secondary"
           />
@@ -136,10 +138,10 @@ export default function Dashboard() {
               sx={{ px: 2.5, py: 2 }}
             >
               <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                Recent alerts
+                {t("dashboard.recentAlerts")}
               </Typography>
               <Link component={RouterLink} to="/events" variant="body2">
-                View all
+                {t("dashboard.viewAll")}
               </Link>
             </Stack>
             <Divider />
@@ -149,7 +151,7 @@ export default function Dashboard() {
                 <ErrorState error={recent.error} onRetry={recent.refresh} />
               </Box>
             ) : recent.loading && !recent.data ? (
-              <Loading label="Loading alerts…" />
+              <Loading label={t("dashboard.loadingAlerts")} />
             ) : recent.data?.events?.length ? (
               <List disablePadding>
                 {recent.data.events.map((event) => (
@@ -168,7 +170,7 @@ export default function Dashboard() {
                           <EventStatusChip status={event.status} />
                         </Stack>
                       }
-                      secondary={`${event.camera_name || "Unknown camera"} · ${fromNow(
+                      secondary={`${event.camera_name || t("dashboard.unknownCamera")} · ${fromNow(
                         event.abandoned_at
                       )}`}
                     />
@@ -177,8 +179,8 @@ export default function Dashboard() {
               </List>
             ) : (
               <EmptyState
-                title="No alerts yet"
-                description="An alert appears here as soon as a worker declares an object abandoned — an object that went static, lost its owner, and stayed unattended past the threshold."
+                title={t("dashboard.noAlertsYet")}
+                description={t("dashboard.anAlertAppearsHereAs")}
               />
             )}
           </Card>
@@ -193,10 +195,10 @@ export default function Dashboard() {
               sx={{ px: 2.5, py: 2 }}
             >
               <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                Cameras
+                {t("dashboard.cameras")}
               </Typography>
               <Link component={RouterLink} to="/cameras" variant="body2">
-                Manage
+                {t("dashboard.manage")}
               </Link>
             </Stack>
             <Divider />
@@ -209,13 +211,13 @@ export default function Dashboard() {
                 </Typography>
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                enabled
+                {t("dashboard.enabled")}
               </Typography>
             </CardContent>
             <Divider />
 
             {cameraList.loading && !cameraList.data ? (
-              <Loading label="Loading cameras…" height={140} />
+              <Loading label={t("dashboard.loadingCameras")} height={140} />
             ) : allCameras.length ? (
               <List disablePadding>
                 {allCameras.slice(0, 6).map((camera) => (
@@ -227,7 +229,7 @@ export default function Dashboard() {
                   >
                     <ListItemText
                       primary={camera.name}
-                      secondary={camera.location || "No location set"}
+                      secondary={camera.location || t("dashboard.noLocationSet")}
                       primaryTypographyProps={{ variant: "body2", fontWeight: 600 }}
                     />
                     <EnabledChip enabled={camera.enabled} />
@@ -236,8 +238,8 @@ export default function Dashboard() {
               </List>
             ) : (
               <EmptyState
-                title="No cameras"
-                description="Register an RTSP source to start watching for unattended luggage."
+                title={t("dashboard.noCameras")}
+                description={t("dashboard.registerAnRtspSourceTo")}
                 icon={<VideocamIcon fontSize="inherit" />}
                 action={
                   <Button
@@ -246,7 +248,7 @@ export default function Dashboard() {
                     variant="contained"
                     size="small"
                   >
-                    Add a camera
+                    {t("dashboard.addACamera")}
                   </Button>
                 }
               />

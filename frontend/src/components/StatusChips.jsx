@@ -7,32 +7,34 @@ import {
   TRACK_STATUS_COLOR,
 } from "../utils/constants";
 import { titleCase } from "../utils/format";
+import { useTranslation } from "react-i18next";
+import i18n from "i18next";
 
 const EVENT_HINT = {
-  OPEN: "Nobody has triaged this yet",
-  ACKNOWLEDGED: "Someone is dealing with it",
-  RESOLVED: "The object was collected or removed",
-  FALSE_POSITIVE: "Nothing was actually abandoned",
+  get OPEN() { return i18n.t("statusChips.nobodyHasTriagedThisYet"); },
+  get ACKNOWLEDGED() { return i18n.t("statusChips.someoneIsDealingWithIt"); },
+  get RESOLVED() { return i18n.t("statusChips.theObjectWasCollectedOr"); },
+  get FALSE_POSITIVE() { return i18n.t("statusChips.nothingWasActuallyAbandoned"); },
 };
 
 const LOST_HINT = {
-  OPEN: "Still searching for a match",
-  MATCHED: "A candidate has been shortlisted",
-  RESOLVED: "Returned to its owner",
-  CLOSED: "Given up on, or withdrawn",
+  get OPEN() { return i18n.t("statusChips.stillSearchingForAMatch"); },
+  get MATCHED() { return i18n.t("statusChips.aCandidateHasBeenShortlisted"); },
+  get RESOLVED() { return i18n.t("statusChips.returnedToItsOwner"); },
+  get CLOSED() { return i18n.t("statusChips.givenUpOnOrWithdrawn"); },
 };
 
 const FOUND_HINT = {
-  UNCLAIMED: "In the gallery, searchable against lost reports",
-  CLAIMED: "Handed back — no longer a match candidate",
-  DISCARDED: "Removed from the gallery",
+  get UNCLAIMED() { return i18n.t("statusChips.inTheGallerySearchableAgainst"); },
+  get CLAIMED() { return i18n.t("statusChips.handedBackNoLongerA"); },
+  get DISCARDED() { return i18n.t("statusChips.removedFromTheGallery"); },
 };
 
 const TRACK_HINT = {
-  MOVING: "In motion — not a candidate for abandonment",
-  ATTENDED: "Stationary, with its owner nearby",
-  UNATTENDED: "Stationary and the owner has left; the timer is running",
-  ABANDONED: "The unattended timer elapsed and an alert was raised",
+  get MOVING() { return i18n.t("statusChips.inMotionNotACandidate"); },
+  get ATTENDED() { return i18n.t("statusChips.stationaryWithItsOwnerNearby"); },
+  get UNATTENDED() { return i18n.t("statusChips.stationaryAndTheOwnerHas"); },
+  get ABANDONED() { return i18n.t("statusChips.theUnattendedTimerElapsedAnd"); },
 };
 
 function BaseChip({ value, colors, hints, size, ...props }) {
@@ -94,9 +96,10 @@ export function TrackStatusChip({ status, size = "small", ...props }) {
 
 /** Whether a camera is configured to run, which is not whether it *is* running. */
 export function EnabledChip({ enabled, size = "small", ...props }) {
+  const { t } = useTranslation();
   return (
     <Chip
-      label={enabled ? "Enabled" : "Disabled"}
+      label={enabled ? t("statusChips.enabled") : t("statusChips.disabled")}
       color={enabled ? "success" : "default"}
       size={size}
       variant={enabled ? "filled" : "outlined"}
@@ -107,19 +110,20 @@ export function EnabledChip({ enabled, size = "small", ...props }) {
 
 /** Whether a worker exists for this camera right now, and whether it has a stream. */
 export function WorkerChip({ worker, size = "small", ...props }) {
+  const { t } = useTranslation();
   if (!worker || !worker.running) {
-    return <Chip label="Stopped" size={size} variant="outlined" {...props} />;
+    return <Chip label={t("statusChips.stopped")} size={size} variant="outlined" {...props} />;
   }
   return (
     <Tooltip
       title={
         worker.connected
-          ? `${worker.frames_processed ?? 0} frames processed`
-          : "Worker is up but the RTSP source is not answering"
+          ? t("statusChips.v0FramesProcessed", { v0: worker.frames_processed ?? 0 })
+          : t("statusChips.workerIsUpButThe")
       }
     >
       <Chip
-        label={worker.connected ? "Streaming" : "Reconnecting"}
+        label={worker.connected ? t("statusChips.streaming") : t("statusChips.reconnecting")}
         color={worker.connected ? "success" : "warning"}
         size={size}
         variant="outlined"

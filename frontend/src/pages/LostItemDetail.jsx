@@ -31,6 +31,7 @@ import { useAuth } from "../auth/AuthContext";
 import { useAsync } from "../hooks/useAsync";
 import { DEFAULT_MIN_MATCH_SCORE, LOST_STATUS } from "../utils/constants";
 import { formatDateTime, formatScore, fromNow, titleCase } from "../utils/format";
+import { useTranslation } from "react-i18next";
 
 function DetailRow({ label, children }) {
   return (
@@ -49,6 +50,7 @@ function DetailRow({ label, children }) {
  * came from the picture or from the words.
  */
 function MatchCard({ match, onConfirm, onReject, busy, canConfirm }) {
+  const { t } = useTranslation();
   return (
     <Card
       data-testid="match-card"
@@ -56,14 +58,14 @@ function MatchCard({ match, onConfirm, onReject, busy, canConfirm }) {
     >
       <ItemImage
         src={foundItems.cropUrl(match.found_id)}
-        alt={`Found ${match.class_name}`}
+        alt={t("lostItemDetail.foundClassName", { class_name: match.class_name })}
         height={180}
-        fallbackLabel="No crop stored"
+        fallbackLabel={t("lostItemDetail.noCrop")}
       />
       <CardContent sx={{ flexGrow: 1 }}>
         <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
           <Typography variant="subtitle2">{titleCase(match.class_name)}</Typography>
-          <Tooltip title={`Raw score ${Number(match.score).toFixed(4)}`}>
+          <Tooltip title={t("lostItemDetail.rawScoreV0", { v0: Number(match.score).toFixed(4) })}>
             <Chip
               size="small"
               color={match.score >= 0.8 ? "success" : match.score >= 0.65 ? "warning" : "default"}
@@ -80,24 +82,24 @@ function MatchCard({ match, onConfirm, onReject, busy, canConfirm }) {
         />
 
         <Typography variant="caption" color="text.secondary" display="block">
-          {match.camera_name || "Unknown camera"} · found {fromNow(match.found_at)}
+          {t("lostItemDetail.v0FoundV1", { v0: match.camera_name || "Unknown camera", v1: fromNow(match.found_at) })}
         </Typography>
 
         <Stack direction="row" spacing={0.5} sx={{ mt: 1.5 }} flexWrap="wrap" useFlexGap>
-          {match.same_class ? <Chip size="small" variant="outlined" label="Same type" /> : null}
-          {match.same_color ? <Chip size="small" variant="outlined" label="Same colour" /> : null}
+          {match.same_class ? <Chip size="small" variant="outlined" label={t("lostItemDetail.sameType")} /> : null}
+          {match.same_color ? <Chip size="small" variant="outlined" label={t("lostItemDetail.sameColour")} /> : null}
           {match.visual_similarity != null ? (
-            <Tooltip title="How much the report photo looks like this crop (shape and colour)">
+            <Tooltip title={t("lostItemDetail.howMuchTheReportPhoto")}>
               <Chip
                 size="small"
                 variant="outlined"
                 color={match.visual_similarity >= 0.6 ? "success" : "default"}
-                label={`Looks ${Math.round(match.visual_similarity * 100)}% alike`}
+                label={t("lostItemDetail.looksV0Alike", { v0: Math.round(match.visual_similarity * 100) })}
               />
             </Tooltip>
           ) : null}
           {match.sightings > 1 ? (
-            <Chip size="small" color="info" variant="outlined" label={`Seen ${match.sightings}×`} />
+            <Chip size="small" color="info" variant="outlined" label={t("lostItemDetail.seenSightings", { sightings: match.sightings })} />
           ) : null}
           {match.dominant_color ? (
             <Chip size="small" variant="outlined" label={titleCase(match.dominant_color)} />
@@ -116,7 +118,7 @@ function MatchCard({ match, onConfirm, onReject, busy, canConfirm }) {
             disabled={busy}
             onClick={() => onConfirm(match)}
           >
-            This is it
+            {t("lostItemDetail.thisIsIt")}
           </Button>
           <Button
             size="small"
@@ -125,7 +127,7 @@ function MatchCard({ match, onConfirm, onReject, busy, canConfirm }) {
             disabled={busy}
             onClick={() => onReject(match)}
           >
-            Not it
+            {t("lostItemDetail.notIt")}
           </Button>
         </CardActions>
       )}
@@ -134,6 +136,7 @@ function MatchCard({ match, onConfirm, onReject, busy, canConfirm }) {
 }
 
 export default function LostItemDetail() {
+  const { t } = useTranslation();
   const { lostId } = useParams();
   const toast = useToast();
   const { hasRole } = useAuth();
@@ -165,8 +168,7 @@ export default function LostItemDetail() {
         item.data?.reporter_email &&
         !item.data.reporter_notified_at;
       toast.success(
-        "Match confirmed. The report is resolved and the item is marked claimed." +
-          (emailing ? " The reporter is being emailed." : "")
+        t("lostItemDetail.matchConfirmed") + (emailing ? ` ${t("lostItemDetail.reporterEmailed")}` : "")
       );
       item.refresh();
       // The email goes out after the response; look again for its timestamp.
@@ -186,7 +188,7 @@ export default function LostItemDetail() {
     setBusy(true);
     try {
       await lostApi.setStatus(lostId, status);
-      toast.success(status === LOST_STATUS.CLOSED ? "Report closed." : "Report reopened.");
+      toast.success(status === LOST_STATUS.CLOSED ? t("lostItemDetail.reportClosed") : t("lostItemDetail.reportReopened"));
       item.refresh();
     } catch (err) {
       toast.error(errorMessage(err));
@@ -199,7 +201,7 @@ export default function LostItemDetail() {
     setBusy(true);
     try {
       await matchApi.reject({ lostId, foundId: match.found_id });
-      toast.info("Suggestion dismissed.");
+      toast.info(t("lostItemDetail.suggestionDismissed"));
       ranking.refresh();
     } catch (err) {
       toast.error(errorMessage(err));
@@ -208,7 +210,7 @@ export default function LostItemDetail() {
     }
   };
 
-  if (item.loading && !item.data) return <Loading label="Loading report…" />;
+  if (item.loading && !item.data) return <Loading label={t("lostItemDetail.loadingReport")} />;
   if (item.error) return <ErrorState error={item.error} onRetry={item.refresh} />;
   if (!item.data) return null;
 
@@ -218,14 +220,12 @@ export default function LostItemDetail() {
   return (
     <Box>
       <Button component={RouterLink} to="/lost-items" startIcon={<ArrowBackIcon />} sx={{ mb: 2 }}>
-        All reports
+        {t("lostItemDetail.allReports")}
       </Button>
 
       <PageHeader
-        title={report.description || "Photo-only report"}
-        subtitle={`Reported ${fromNow(report.reported_at)}${
-          report.reporter_name ? ` by ${report.reporter_name}` : ""
-        }`}
+        title={report.description || t("lostItemDetail.photoOnlyReport")}
+        subtitle={t("lostItemDetail.reportedV0V1", { v0: fromNow(report.reported_at), v1: report.reporter_name ? ` by ${report.reporter_name}` : "" })}
         actions={[
           <Button
             key="rerun"
@@ -233,7 +233,7 @@ export default function LostItemDetail() {
             startIcon={<SearchIcon />}
             disabled={ranking.loading}
           >
-            {ranking.loading ? "Searching…" : "Re-run matching"}
+            {ranking.loading ? t("lostItemDetail.searching") : t("lostItemDetail.reRunMatching")}
           </Button>,
           canConfirm && report.status === LOST_STATUS.CLOSED ? (
             <Button
@@ -242,7 +242,7 @@ export default function LostItemDetail() {
               startIcon={<LockOpenIcon />}
               disabled={busy}
             >
-              Reopen report
+              {t("lostItemDetail.reopenReport")}
             </Button>
           ) : null,
           canConfirm && [LOST_STATUS.OPEN, LOST_STATUS.MATCHED].includes(report.status) ? (
@@ -253,7 +253,7 @@ export default function LostItemDetail() {
               startIcon={<LockIcon />}
               disabled={busy}
             >
-              Close report
+              {t("lostItemDetail.closeReport")}
             </Button>
           ) : null,
         ].filter(Boolean)}
@@ -266,26 +266,26 @@ export default function LostItemDetail() {
               // The API returns the photo base64-encoded in the JSON rather than
               // as its own endpoint, so it is inlined as a data URL.
               src={report.photo_base64 ? `data:image/jpeg;base64,${report.photo_base64}` : null}
-              alt={report.description || "Reported item"}
+              alt={report.description || t("lostItemDetail.reportedItem")}
               height={220}
               fit="contain"
-              fallbackLabel="No photo — description only"
+              fallbackLabel={t("lostItemDetail.noPhoto")}
             />
             <CardContent>
-              <DetailRow label="Status">
+              <DetailRow label={t("lostItemDetail.status")}>
                 <LostStatusChip status={report.status} />
               </DetailRow>
-              <DetailRow label="Object">
+              <DetailRow label={t("lostItemDetail.object")}>
                 <Typography variant="body2">
-                  {report.class_name ? titleCase(report.class_name) : "Unspecified"}
+                  {report.class_name ? titleCase(report.class_name) : t("lostItemDetail.unspecified")}
                 </Typography>
               </DetailRow>
-              <DetailRow label="Colour">
+              <DetailRow label={t("lostItemDetail.colour")}>
                 <Typography variant="body2" color="text.secondary">
                   {report.dominant_color ? titleCase(report.dominant_color) : "—"}
                 </Typography>
               </DetailRow>
-              <DetailRow label="Reporter">
+              <DetailRow label={t("lostItemDetail.reporter")}>
                 <Typography variant="body2">{report.reporter_name || "—"}</Typography>
                 {report.reporter_email ? (
                   <Typography variant="caption" color="text.disabled">
@@ -294,16 +294,16 @@ export default function LostItemDetail() {
                 ) : null}
                 {report.reporter_notified_at ? (
                   <Typography variant="caption" color="success.main" sx={{ display: "block" }}>
-                    Told it was found · {formatDateTime(report.reporter_notified_at)}
+                    {t("lostItemDetail.toldItWasFoundV0", { v0: formatDateTime(report.reporter_notified_at) })}
                   </Typography>
                 ) : null}
               </DetailRow>
-              <DetailRow label="Lost after">
+              <DetailRow label={t("lostItemDetail.lostAfter")}>
                 <Typography variant="body2" color="text.secondary">
-                  {report.lost_after ? formatDateTime(report.lost_after) : "Not narrowed"}
+                  {report.lost_after ? formatDateTime(report.lost_after) : t("lostItemDetail.notNarrowed")}
                 </Typography>
               </DetailRow>
-              <DetailRow label="Reported">
+              <DetailRow label={t("lostItemDetail.reported")}>
                 <Typography variant="body2" color="text.secondary">
                   {formatDateTime(report.reported_at)}
                 </Typography>
@@ -315,20 +315,17 @@ export default function LostItemDetail() {
         <Grid size={{ xs: 12, md: 8, lg: 9 }}>
           <Card sx={{ mb: 2, px: 2.5, py: 2 }}>
             <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-              Candidates from the found gallery
+              {t("lostItemDetail.candidatesFromTheFoundGallery")}
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              Unclaimed items found after the loss, scored on the same object type (50%), a
-              matching colour (30%) and how soon after the loss they turned up (20%). Repeat
-              sightings of one object are shown once. Anything scoring below{" "}
-              {formatScore(DEFAULT_MIN_MATCH_SCORE, 0)} is not shown.
+              {t("lostItemDetail.unclaimedItemsFoundAfterThe", { v0: formatScore(DEFAULT_MIN_MATCH_SCORE, 0) })}
             </Typography>
           </Card>
 
-          <ErrorState error={ranking.error} onRetry={ranking.refresh} title="Matching failed" />
+          <ErrorState error={ranking.error} onRetry={ranking.refresh} title={t("lostItemDetail.matchingFailed")} />
 
           {ranking.loading && !ranking.data ? (
-            <Loading label="Ranking the gallery…" />
+            <Loading label={t("lostItemDetail.rankingTheGallery")} />
           ) : candidates.length ? (
             <Grid container spacing={2}>
               {candidates.map((match) => (
@@ -346,12 +343,12 @@ export default function LostItemDetail() {
           ) : (
             <Card>
               <EmptyState
-                title="No likely matches yet"
-                description="No unclaimed item found after the loss shares this report's type or colour. Re-run this once new items come in, or search the gallery by camera and time."
+                title={t("lostItemDetail.noLikelyMatchesYet")}
+                description={t("lostItemDetail.noUnclaimedItemFoundAfter")}
                 icon={<SearchIcon fontSize="inherit" />}
                 action={
                   <Button component={RouterLink} to="/search" variant="outlined">
-                    Search the gallery
+                    {t("lostItemDetail.searchTheGallery")}
                   </Button>
                 }
               />
@@ -362,9 +359,9 @@ export default function LostItemDetail() {
 
       <ConfirmDialog
         open={Boolean(pendingConfirm)}
-        title="Confirm this match?"
-        description="The report is marked resolved, the found item is marked claimed, and the alert it came from is closed. The item then drops out of future searches."
-        confirmLabel="Confirm match"
+        title={t("lostItemDetail.confirmThisMatch")}
+        description={t("lostItemDetail.theReportIsMarkedResolved")}
+        confirmLabel={t("lostItemDetail.confirmMatch")}
         confirmColor="success"
         busy={busy}
         onConfirm={confirm}
@@ -372,9 +369,9 @@ export default function LostItemDetail() {
       />
       <ConfirmDialog
         open={pendingClose}
-        title="Close this report?"
-        description="Use this when nobody will follow it up any more. The report keeps its history and can be reopened."
-        confirmLabel="Close report"
+        title={t("lostItemDetail.closeThisReport")}
+        description={t("lostItemDetail.useThisWhenNobodyWill")}
+        confirmLabel={t("lostItemDetail.closeReport")}
         busy={busy}
         onConfirm={() => setReportStatus(LOST_STATUS.CLOSED)}
         onClose={() => setPendingClose(false)}
