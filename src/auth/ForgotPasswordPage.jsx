@@ -49,8 +49,9 @@ export function ForgotPasswordPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await api.forgotPassword(email.trim());
-      setNotice(t("reset.codeSent"));
+      const result = await api.forgotPassword(email.trim());
+      // The server's own wording when it sends one: it knows the code's lifetime.
+      setNotice(result?.message || t("reset.codeSent"));
       setStep("reset");
       setResendIn(RESEND_SECONDS);
     } catch (err) {
@@ -70,8 +71,8 @@ export function ForgotPasswordPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await api.resetPassword({ email: email.trim(), code, newPassword: password });
-      navigate("/login", { replace: true, state: { notice: t("reset.done") } });
+      const result = await api.resetPassword({ email: email.trim(), code, newPassword: password });
+      navigate("/login", { replace: true, state: { notice: result?.message || t("reset.done") } });
     } catch (err) {
       setError(errorMessage(err, t("reset.failed")));
     } finally {

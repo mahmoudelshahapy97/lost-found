@@ -120,7 +120,7 @@ export function NotificationBell() {
 
   return (
     <>
-      <Tooltip title={unread ? t("notifications.unreadCount", { count: unread }) : t("notifications.title")}>
+      <Tooltip describeChild title={unread ? t("notifications.unreadCount", { count: unread }) : t("notifications.title")}>
         <IconButton onClick={handleOpen} aria-label={t("notifications.title")}>
           <Badge badgeContent={unread} color="error" max={99} data-testid="notification-badge">
             {unread ? <NotificationsActiveIcon /> : <NotificationsIcon />}
@@ -150,7 +150,7 @@ export function NotificationBell() {
             <Alert severity="error" sx={{ m: 2 }}>
               {error}
             </Alert>
-          ) : items === null ? (
+          ) : !items ? (
             <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
               <CircularProgress size={24} />
             </Box>

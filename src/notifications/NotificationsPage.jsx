@@ -18,6 +18,7 @@ import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Tooltip from "@mui/material/Tooltip";
 import DoneAllIcon from "@mui/icons-material/DoneAll";
+import SendIcon from "@mui/icons-material/Send";
 import MarkEmailReadIcon from "@mui/icons-material/MarkEmailRead";
 import MarkEmailUnreadIcon from "@mui/icons-material/MarkEmailUnread";
 import NotificationsNoneIcon from "@mui/icons-material/NotificationsNone";
@@ -94,6 +95,15 @@ export function NotificationsPage({ kinds = [], subtitle }) {
     }
   };
 
+  const sendTest = async () => {
+    try {
+      await api.notifications.sendTest();
+      toast.info(t("notifications.testSent"));
+    } catch (err) {
+      toast.error(errorMessage(err));
+    }
+  };
+
   const readAll = async () => {
     try {
       await markRead();
@@ -110,9 +120,16 @@ export function NotificationsPage({ kinds = [], subtitle }) {
         title={t("notifications.title")}
         subtitle={subtitle ?? t("notifications.subtitle")}
         actions={
-          <Button startIcon={<DoneAllIcon />} onClick={readAll} disabled={!data?.unread}>
-            {t("notifications.markAllRead")}
-          </Button>
+          <>
+            {api.notifications.sendTest && (
+              <Button variant="outlined" startIcon={<SendIcon />} onClick={sendTest}>
+                {t("notifications.sendTest")}
+              </Button>
+            )}
+            <Button startIcon={<DoneAllIcon />} onClick={readAll} disabled={!data?.unread}>
+              {t("notifications.markAllRead")}
+            </Button>
+          </>
         }
       />
 
