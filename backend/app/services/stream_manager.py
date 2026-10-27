@@ -26,6 +26,7 @@ from app.services.abandonment_service import AbandonmentParams, AbandonmentTrack
 from app.services.camera_service import camera_service
 from app.services.clip_recorder import ClipRecorder, FinishedClip, encode_mp4, resize_max_width
 from app.services.event_service import event_service
+from app.services.inbox_service import inbox_service
 from app.services.notification_service import notification_service
 from app.services.object_store import clip_key, object_store
 from app.services.rtsp_reader import RTSPReader
@@ -64,6 +65,24 @@ async def wait_for_clips(timeout: float) -> None:
     _, pending = await asyncio.wait(set(_clip_tasks), timeout=timeout)
     if pending:
         logger.warning("%s clip(s) still encoding at shutdown.", len(pending))
+
+
+async def _alert_to_inbox(camera_id: UUID, camera_name: str, event: Dict[str, Any]) -> None:
+    """The bell's half of a new alert: everyone who can see the camera's
+    workspace hears about it once (ref_id = the event)."""
+    camera = await camera_service.get_camera(camera_id)
+    thing = (event.get("class_name") or "item").replace("_", " ")
+    await inbox_service.notify_workspace(
+        camera["workspace_id"] if camera else None,
+        kind="alert",
+        severity="high",
+        title=f"Abandoned {thing}",
+        message=f"An abandoned {thing} was detected on {camera_name}.",
+        link=f"/events/{event['event_id']}",
+        camera_id=camera_id,
+        camera_name=camera_name,
+        ref_id=event["event_id"],
+    )
 
 
 class CameraWorker:
@@ -302,16 +321,25 @@ class CameraWorker:
                 self.events_emitted += 1
                 if config.clip_enabled:
                     self.clips.start(stored["event_id"], now)
+                self._spawn_notice(
+                    _alert_to_inbox(self.camera_id, self.name, stored),
+                    f"alert-inbox-{stored['event_id']}",
+                )
                 if config.mail_enabled:
-                    task = asyncio.create_task(
+                    self._spawn_notice(
                         notification_service.alert_raised(self.camera_id, stored["event_id"]),
-                        name=f"alert-mail-{stored['event_id']}",
+                        f"alert-mail-{stored['event_id']}",
                     )
-                    _mail_tasks.add(task)
-                    task.add_done_callback(_mail_tasks.discard)
 
         for clip in self.clips.pop_finished(now):
             self._spawn_clip(clip)
+
+    @staticmethod
+    def _spawn_notice(coro, name: str) -> None:
+        """Bell and email go out beside the camera loop, never in its way."""
+        task = asyncio.create_task(coro, name=name)
+        _mail_tasks.add(task)
+        task.add_done_callback(_mail_tasks.discard)
 
     def _annotate(self, frame: np.ndarray, detections: List[Any]) -> np.ndarray:
         persons = [d.box for d in detections if d.is_person]

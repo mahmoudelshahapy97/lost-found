@@ -1,4 +1,6 @@
 # app/api/routes/event_router.py
+import csv
+import io
 import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -15,6 +17,7 @@ from app.api.deps import (
     require_role,
 )
 from app.schemas.event_schemas import EventListResponse, EventStatusUpdate
+from app.services.audit_service import csv_safe
 from app.services.event_service import event_service
 from app.services.object_store import object_store
 from app.services.stream_manager import clip_root
@@ -73,6 +76,49 @@ async def event_stats(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not compute stats."
         )
+
+
+EXPORT_LIMIT = 50_000
+_EXPORT_COLUMNS = [
+    "event_id", "abandoned_at", "camera_name", "class_name", "confidence", "status",
+    "dominant_color", "first_seen_at", "acknowledged_at", "resolved_at", "resolved_by_username",
+    "action_taken", "description", "has_clip",
+]
+
+
+@router.get("/export.csv")
+async def export_events(
+    camera_id: Optional[UUID] = Query(None),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    class_name: Optional[str] = Query(None),
+    start: Optional[datetime] = Query(None),
+    end: Optional[datetime] = Query(None),
+    current_user: Dict[str, Any] = Depends(require_role("viewer")),
+    workspace_id: UUID = Depends(get_workspace_id),
+) -> Response:
+    """The Alerts list's filters as CSV, newest first, up to 50,000 rows."""
+    page = await event_service.list_events(
+        camera_id=camera_id,
+        status=status_filter,
+        class_name=class_name,
+        start=start,
+        end=end,
+        page=1,
+        per_page=EXPORT_LIMIT,
+        workspace_id=workspace_id,
+    )
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(_EXPORT_COLUMNS)
+    for event in page["events"]:
+        writer.writerow(
+            [v.isoformat() if isinstance(v, datetime) else v for v in (event.get(c) for c in _EXPORT_COLUMNS)]
+        )
+    return Response(
+        content=csv_safe(out.getvalue()),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="alerts.csv"'},
+    )
 
 
 @router.get("/{event_id}")

@@ -11,6 +11,9 @@ from app.core.security import hash_password, verify_password
 
 logger = logging.getLogger(__name__)
 
+# A real bcrypt hash of a random string, for timing-equal failed logins.
+_DUMMY_HASH = hash_password("timing-equaliser-not-a-password")
+
 
 class UserService:
     def __init__(self) -> None:
@@ -179,6 +182,9 @@ class UserService:
         if not user and "@" in username:
             user = await self.find_by_email(username)
         if not user or not user["is_active"]:
+            # Hash anyway, so an unknown login takes as long as a wrong
+            # password and response times do not list the accounts.
+            verify_password(password, _DUMMY_HASH)
             return None
         if not verify_password(password, user["password_hash"]):
             return None
